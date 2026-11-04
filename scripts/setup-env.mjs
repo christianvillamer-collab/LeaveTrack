@@ -21,6 +21,9 @@ DIRECT_URL="postgres://leavetrack:leavetrack@localhost:55432/leavetrack"
 NEXT_PUBLIC_SUPABASE_URL=""
 NEXT_PUBLIC_SUPABASE_ANON_KEY=""
 SUPABASE_SERVICE_ROLE_KEY=""
+
+# Monthly accrual job (TASK-017). GET/POST /api/jobs/accrual requires
+# Authorization: Bearer $CRON_SECRET; leave empty to disable the job locally.
 CRON_SECRET=""
 `;
 

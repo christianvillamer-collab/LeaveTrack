@@ -174,9 +174,8 @@ fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed fo
   manager's direct reports + their active requests; employees/HR receive 403.
 - Confirmed balances come from `leave_balances`; pending is the sum of active pending requests per
   leave type. Pending is never folded into confirmed.
-- `lastAccruedAt` currently reflects `leave_balances.updated_at`. There is no accrual ledger yet, so
-  the page labels it “Balances as of …” rather than inventing a next-run date. TASK-017 owns the
-  monthly accrual job.
+- `lastAccruedAt` reflects `leave_balances.updated_at`, so any balance change (an accrual or an
+  approved request) moves it. `accrual_ledger` is the authoritative monthly marker.
 - `/balance` uses the same `getMyLeaveData` service server-side; the GET route serves API clients.
 - `/requests`, `/requests/[id]`, and the manager dashboard remain mock-backed for now. The
   `/approvals` queue is DB-backed for managers and now supports approve/reject; HR sees an explicit
@@ -234,7 +233,33 @@ fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed fo
 - **404** — unknown or malformed `userId`. `requestReference` is derived from the request UUID
   (`LR-` + last eight hex characters) because `leave_requests` has no reference column.
 - The `/audit` page renders the same report for a selected employee; the last-accrual stat stays
-  mock data until TASK-017.
+  mock data.
+
+## Monthly accrual (TASK-017)
+
+`GET`/`POST /api/jobs/accrual` applies one month of accrual for every tracked leave policy:
+
+```json
+{
+  "success": true,
+  "data": { "period": "2026-11-01", "usersAccrued": 10, "balancesAccrued": 20, "totalDays": 22.5 }
+}
+```
+
+- **System auth, not a session.** The route is public in `proxy.ts` and requires
+  `Authorization: Bearer $CRON_SECRET`. A missing secret returns 503; a bad or missing header
+  returns 401.
+- **Vercel Cron uses GET.** `vercel.json` schedules `0 6 1 * *` (06:00 UTC on the 1st); `POST` is
+  kept because the architecture contract names it. Both verbs run the same handler. Vercel's Hobby
+  plan only allows daily schedules — that is safe here, because a daily run after the first one is a
+  no-op.
+- **Idempotent per month.** `accrual_ledger` stores one row per `(user_id, leave_type_id, period)`.
+  The ledger insert and the balance upsert happen in one statement, so a repeat run records and
+  credits nothing. A user added mid-month still accrues on a later run because their pair has no
+  ledger row yet.
+- **Periods are UTC month starts** (`YYYY-MM-01`); `lib/domain/accrual.ts` owns the conversion.
+- Unpaid and any other `tracks_balance = false` type is skipped, as is a policy with a zero rate.
+- The dashboard, `/settings/policies`, and `/audit` accrual stats remain mock (`accrualSummary`).
 
 ## Project structure
 
@@ -281,8 +306,8 @@ proxy.ts                 Next 16 route guard (not middleware.ts)
   `/audit`, and the manager `/approvals` queue use Postgres. The dashboard, request list/detail, and
   policy pages still read `lib/mock/data.ts`.
 - **Route handlers.** `/api/health`, `GET`/`POST /api/leave-requests`,
-  `POST /api/leave-requests/:id/decision`, and `GET /api/audit/:userId`. The accrual endpoint does
-  not exist yet.
+  `POST /api/leave-requests/:id/decision`, `GET /api/audit/:userId`, and
+  `GET`/`POST /api/jobs/accrual`.
 - **Manager queue scope.** `scope=team` is manager-only. It uses
   `WHERE employee.manager_id = :current_user_id`; employees and HR receive 403. The HR override
   view is not part of TASK-013.
