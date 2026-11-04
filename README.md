@@ -194,13 +194,16 @@ fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed fo
 - **Approve** — manager only, direct reports only. The request becomes `approved`, the tracked
   leave balance is decremented by the inclusive day count, `decided_by`/`decided_at` are set, and
   an `approved` audit row is written in the same transaction.
+- **Leave types are independent** — approval decrements only the request's own leave type. Vacation
+  and Sick have separate balance rows; Unpaid has none, and no type is ever adjusted with another.
 - **Reject** — requires a non-empty reason; status becomes `rejected`, balance is unchanged,
   `decision_note` stores the reason, and a `rejected` audit row is written.
 - **403** — caller is not a manager or the request owner is not the caller’s direct report.
 - **404** — request does not exist or is soft-deleted.
 - **409** — already decided, or the employee’s confirmed balance is lower than the requested days
   (HR override is required; the scaffold does not clamp balances).
-- **Unpaid** — approval succeeds with no balance row/change.
+- **Unpaid** — has no policy or balance row, so submission is never balance-checked and approval
+  succeeds with no balance change.
 - The queue buttons are manager-only; the history table stays read-only. Every action refreshes the
   queue and history.
 
