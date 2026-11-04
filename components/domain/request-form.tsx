@@ -185,8 +185,14 @@ export function RequestForm({
         )}
       </Field>
 
-      <div className="grid gap-5 sm:grid-cols-2">
-        <Field id="startDate" label="Start date" error={errors.startDate} required>
+      <div className="grid min-w-0 gap-5 sm:grid-cols-2">
+        <Field
+          id="startDate"
+          label="Start date"
+          error={errors.startDate}
+          required
+          className="min-w-0"
+        >
           {({ id, describedBy, invalid, required }) => (
             <div className="relative">
               <CalendarDays
@@ -211,7 +217,7 @@ export function RequestForm({
           )}
         </Field>
 
-        <Field id="endDate" label="End date" error={errors.endDate} required>
+        <Field id="endDate" label="End date" error={errors.endDate} required className="min-w-0">
           {({ id, describedBy, invalid, required }) => (
             <div className="relative">
               <CalendarDays
