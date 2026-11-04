@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: leavetrack-postgres
+    environment:
+      POSTGRES_USER: leavetrack
+      POSTGRES_PASSWORD: leavetrack
+      POSTGRES_DB: leavetrack
+    ports:
+      - "55432:5432"
+    volumes:
+      - leavetrack_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leavetrack -d leavetrack"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  leavetrack_pgdata:

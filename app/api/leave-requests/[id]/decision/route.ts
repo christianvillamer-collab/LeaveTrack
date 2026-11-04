@@ -1,0 +1,61 @@
+import { z } from "zod";
+
+import { AppError } from "@/lib/api/errors";
+import { withApiHandler } from "@/lib/api/handler";
+import { getSession } from "@/lib/auth/session";
+import { decideLeaveRequest } from "@/lib/db/leave";
+import { findUserByEmail } from "@/lib/db/users";
+import type { LeaveDecisionResult } from "@/lib/types";
+import { decisionInputSchema } from "@/lib/validation/leave";
+
+export const runtime = "nodejs";
+
+export const POST = withApiHandler<LeaveDecisionResult, { id: string }>(
+  "POST /api/leave-requests/:id/decision",
+  async (request, context) => {
+    const session = await getSession();
+
+    if (!session) {
+      throw AppError.unauthenticated();
+    }
+
+    const user = await findUserByEmail(session.email);
+
+    if (!user) {
+      throw AppError.forbidden("No employee record is linked to this account.");
+    }
+
+    if (user.role !== "manager") {
+      throw AppError.forbidden("Manager access is required.");
+    }
+
+    if (!context.params) {
+      throw AppError.notFound("Leave request not found.");
+    }
+
+    const { id } = await context.params;
+    const parsedId = z.uuid().safeParse(id);
+
+    if (!parsedId.success) {
+      throw AppError.notFound("Leave request not found.");
+    }
+
+    let body: unknown;
+
+    try {
+      body = await request.json();
+    } catch {
+      throw AppError.validation("Send a valid JSON request body.");
+    }
+
+    const input = decisionInputSchema.parse(body);
+
+    return decideLeaveRequest({
+      requestId: parsedId.data,
+      managerId: user.id,
+      managerName: user.name,
+      decision: input.decision,
+      reason: input.reason,
+    });
+  },
+);
