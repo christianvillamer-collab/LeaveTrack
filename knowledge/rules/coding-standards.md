@@ -54,6 +54,9 @@ Traces to `docs/arch-docs/ARCH-LeaveTrack-v1.0.md`, `ADR-LeaveTrack-E001`, and `
 - Migrations are ordered SQL files in `db/migrations/`; never edit an applied migration — add a new
   one.
 - Seed SQL must be idempotent (fixed UUIDs + `ON CONFLICT DO NOTHING`).
+- Derived display references (for tables with no reference column) must use the **trailing** UUID
+  hex segment. Seeded UUIDs share a leading segment (`b0000000-…`), so a first-N slice produces
+  duplicate references (`LR-B0000000` for every row).
 - Use parameterized queries. No template-string SQL with user input.
 - Mutations that affect approval state must write the audit row in the same transaction.
 - Balance is not decremented at submission; over-balance is an advisory warning only.

@@ -49,15 +49,45 @@ export interface Policy {
   assignedEmployees: number;
 }
 
+/**
+ * Identity columns the database actually stores for a user. `Employee` carries
+ * presentation-only fields (job title, team) that have no column yet, so audit
+ * surfaces use this narrower shape.
+ */
+export type AuditEventPerson = Pick<Employee, "id" | "name" | "email">;
+
 export interface AuditEvent {
   id: string;
   requestId: string;
   requestReference: string;
-  employee: Employee;
-  actor: Employee;
+  employee: AuditEventPerson;
+  actor: AuditEventPerson;
   action: "submitted" | "approved" | "rejected";
   occurredAt: string;
   detail: string;
+}
+
+export interface AuditReportRequest {
+  id: string;
+  reference: string;
+  leaveType: LeaveType;
+  startDate: string;
+  endDate: string;
+  days: number;
+  status: RequestStatus;
+  createdAt: string;
+  decidedAt: string | null;
+  decidedBy: AuditEventPerson | null;
+}
+
+export interface AuditReportEmployee extends AuditEventPerson {
+  role: Role;
+}
+
+export interface AuditReport {
+  employee: AuditReportEmployee;
+  requests: AuditReportRequest[];
+  events: AuditEvent[];
 }
 
 export interface LeaveRequestWarning {

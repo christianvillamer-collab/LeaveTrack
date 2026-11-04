@@ -72,7 +72,7 @@ export function canAccessPath(role: Role, pathname: string): boolean {
     return canManageRequests(role);
   }
 
-  if (pathname.startsWith("/audit")) {
+  if (pathname.startsWith("/audit") || pathname.startsWith("/api/audit")) {
     return canRunAudit(role);
   }
 

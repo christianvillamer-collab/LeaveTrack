@@ -18,7 +18,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:db": "node --env-file-if-exists=.env.local node_modules/vitest/vitest.mjs run tests/leave-request.integration.test.ts && node --env-file-if-exists=.env.local node_modules/vitest/vitest.mjs run tests/leave-balance.integration.test.ts && node --env-file-if-exists=.env.local node_modules/vitest/vitest.mjs run tests/leave-team.integration.test.ts && node --env-file-if-exists=.env.local node_modules/vitest/vitest.mjs run tests/leave-decision.integration.test.ts",
+    "test:db": "node --env-file-if-exists=.env.local node_modules/vitest/vitest.mjs run tests/leave-request.integration.test.ts && node --env-file-if-exists=.env.local node_modules/vitest/vitest.mjs run tests/leave-balance.integration.test.ts && node --env-file-if-exists=.env.local node_modules/vitest/vitest.mjs run tests/leave-team.integration.test.ts && node --env-file-if-exists=.env.local node_modules/vitest/vitest.mjs run tests/leave-decision.integration.test.ts && node --env-file-if-exists=.env.local node_modules/vitest/vitest.mjs run tests/leave-audit.integration.test.ts",
     "env:setup": "node scripts/setup-env.mjs",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",

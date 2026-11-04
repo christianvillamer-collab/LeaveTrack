@@ -15,6 +15,7 @@
 | `retros/task-012.md`             | TASK-012 balance results, accrual-timestamp caveat, backlog        |
 | `retros/task-013.md`             | TASK-013 manager queue results, HR boundary, backlog               |
 | `retros/task-014.md`             | TASK-014 decision results, over-balance/HR boundary, backlog       |
+| `retros/task-015.md`             | TASK-015 audit report results, soft-delete proof, reference caveat |
 
 Source documents remain authoritative:
 
