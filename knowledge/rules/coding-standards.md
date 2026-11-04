@@ -73,6 +73,8 @@ Traces to `docs/arch-docs/ARCH-LeaveTrack-v1.0.md`, `ADR-LeaveTrack-E001`, and `
 - Labels are always associated with controls; errors use `role="alert"` and `aria-describedby`.
 - Dense request/audit tables become stacked cards below `xl` (the 1024px sidebar leaves too
   little room); never rely on horizontal page scroll for primary content.
+- Native `type="date"` controls have intrinsic widths; give them `min-w-0`/`max-w-full` inside
+  grids and flex rows, then verify 320 and 375 with a scroll-width check, not just 375.
 
 ## Logging
 

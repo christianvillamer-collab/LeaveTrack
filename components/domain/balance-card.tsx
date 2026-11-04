@@ -12,9 +12,9 @@ export function BalanceCard({ balance }: { balance: LeaveBalance }) {
 
   return (
     <Card className="flex flex-col gap-4 p-5">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <LeaveTypeBadge leaveType={balance.leaveType} />
-        <span className="text-caption text-muted-foreground">
+        <span className="text-caption text-muted-foreground min-w-0">
           {tracked
             ? `${formatDays(balance.accrualPerMonth ?? 0)} accrued / month`
             : "No balance tracked"}

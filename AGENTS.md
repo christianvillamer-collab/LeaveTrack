@@ -4,7 +4,7 @@
 
 Next.js 16 (App Router) + TypeScript + Tailwind v4 + Postgres/Supabase leave-management app.
 
-**Day 0 scaffold + TASK-011/012/013/014/015.** Auth is still a mock httpOnly cookie. Most screens
+**Day 0 scaffold + TASK-011/012/013/014/015/016.** Auth is still a mock httpOnly cookie. Most screens
 read fixtures from `lib/mock/data.ts`; `POST /api/leave-requests` + `/requests/new` write to Postgres,
 and `GET /api/leave-requests` + `/balance` + the manager `/approvals` queue read from it. Managers
 can now approve/reject through `POST /api/leave-requests/:id/decision`, and HR reads per-employee
@@ -88,6 +88,8 @@ npm run db:seed             # idempotent; safe to run twice
   `text-*` size token, register it in `lib/utils/cn.ts` too.
 - Dense request/audit tables switch to stacked cards below `xl`; the 1024px sidebar leaves them no
   room to fit. Don't drop them back to `md` without re-running the 1024px overflow check.
+- Native `type="date"` inputs need `min-w-0`/`max-w-full` inside grid or flex cells; verify both
+  mobile pages at 320 and 375 with the horizontal-scroll check, not just 375.
 
 ## Conventions and gotchas
 
