@@ -6,7 +6,9 @@ import { canAccessPath } from "@/lib/auth/session";
 import { ROLE_HOME, isRole } from "@/lib/auth/roles";
 import { requestById } from "@/lib/mock/data";
 
-const PUBLIC_PATHS = new Set(["/login", "/api/health", "/forbidden"]);
+// `/api/jobs/accrual` is the system cron route: it has no user session and
+// authenticates itself with CRON_SECRET, so it must bypass the mock cookie gate.
+const PUBLIC_PATHS = new Set(["/login", "/api/health", "/api/jobs/accrual", "/forbidden"]);
 const ASSET_PATTERN = /\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|xml|woff2?)$/i;
 
 function isPublic(pathname: string): boolean {
