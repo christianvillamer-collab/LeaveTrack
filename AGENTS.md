@@ -4,10 +4,11 @@
 
 Next.js 16 (App Router) + TypeScript + Tailwind v4 + Postgres/Supabase leave-management app.
 
-**Day 0 scaffold + TASK-011/012/013/014.** Auth is still a mock httpOnly cookie. Most screens read
-fixtures from `lib/mock/data.ts`; `POST /api/leave-requests` + `/requests/new` write to Postgres,
+**Day 0 scaffold + TASK-011/012/013/014/015.** Auth is still a mock httpOnly cookie. Most screens
+read fixtures from `lib/mock/data.ts`; `POST /api/leave-requests` + `/requests/new` write to Postgres,
 and `GET /api/leave-requests` + `/balance` + the manager `/approvals` queue read from it. Managers
-can now approve/reject through `POST /api/leave-requests/:id/decision`. There is no provider SDK.
+can now approve/reject through `POST /api/leave-requests/:id/decision`, and HR reads per-employee
+reports through `GET /api/audit/:userId` + `/audit`. There is no provider SDK.
 Do not wire real auth or the remaining DB-backed pages without a task — that is future Day 1 work.
 
 ## Commands
@@ -50,10 +51,11 @@ npm run db:seed             # idempotent; safe to run twice
 - `lib/db/*` owns SQL. `POST /api/leave-requests` resolves the DB user from the session email and
   writes `leave_requests` + `audit_log` in one transaction. The cookie role is UI-only; never trust
   a client-supplied `userId`.
-- Route handlers are `/api/health`, `GET`/`POST /api/leave-requests`, and
-  `POST /api/leave-requests/:id/decision`. All API failures must go through `withApiHandler` +
-  `AppError` and return `{ success:false, error:{ code, message } }`; use `successStatus: 201` for
-  created resources. Dynamic routes receive `params` through the handler context.
+- Route handlers are `/api/health`, `GET`/`POST /api/leave-requests`,
+  `POST /api/leave-requests/:id/decision`, and `GET /api/audit/:userId`. All API failures must go
+  through `withApiHandler` + `AppError` and return `{ success:false, error:{ code, message } }`; use
+  `successStatus: 201` for created resources. Dynamic routes receive `params` through the handler
+  context.
 - Decisions are manager-only and transactional: lock the request, verify the owner’s `manager_id`,
   reject non-pending/duplicate decisions with 409, decrement only tracked leave types on approve,
   require a reject reason, and insert the append-only audit row in the same transaction. Over-balance

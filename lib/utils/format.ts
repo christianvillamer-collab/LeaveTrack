@@ -34,6 +34,16 @@ export function countLeaveDays(startDate: string, endDate: string): number {
   return differenceInCalendarDays(parseISO(endDate), parseISO(startDate)) + 1;
 }
 
+/**
+ * Stable display reference for a leave request. `leave_requests` has no
+ * reference column, so audit surfaces derive one from the UUID instead of
+ * inventing a schema field. The trailing hex is used because seeded UUIDs share
+ * a leading segment (`b0000000-…`), which would make references collide.
+ */
+export function formatRequestReference(id: string): string {
+  return `LR-${id.replace(/-/g, "").slice(-8).toUpperCase()}`;
+}
+
 export function formatDays(value: number): string {
   return `${value.toLocaleString("en-GB", {
     minimumFractionDigits: Number.isInteger(value) ? 0 : 1,

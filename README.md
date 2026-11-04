@@ -99,8 +99,8 @@ npm run db:seed
 ```
 
 - The app builds and most pages render with no database configured.
-- `/requests/new`, `/balance`, `GET /api/leave-requests`, and `POST /api/leave-requests` require a
-  configured, migrated DB.
+- `/requests/new`, `/balance`, `/audit`, `GET /api/leave-requests`, `POST /api/leave-requests`, and
+  `GET /api/audit/:userId` require a configured, migrated DB.
 - `/api/health` reports `database: "not_configured"` until a URL is present.
 - Migrations are tracked in `schema_migrations` and run in a transaction.
 - The seed uses fixed UUIDs and `ON CONFLICT DO NOTHING`, so it is safe to run repeatedly.
@@ -204,6 +204,38 @@ fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed fo
 - The queue buttons are manager-only; the history table stays read-only. Every action refreshes the
   queue and history.
 
+## HR audit report (TASK-015)
+
+`GET /api/audit/:userId` returns one employee’s full audit report:
+
+```json
+{
+  "success": true,
+  "data": {
+    "employee": { "id": "…", "name": "Maya Chen", "email": "…", "role": "employee" },
+    "requests": [
+      {
+        "id": "…",
+        "reference": "LR-00000001",
+        "status": "rejected",
+        "decidedBy": { "id": "…", "name": "Daniel Okafor", "email": "…" },
+        "decidedAt": "2026-11-04T01:20:00.000Z"
+      }
+    ],
+    "events": []
+  }
+}
+```
+
+- **HR Admin only.** Employees and managers receive 403; unauthenticated requests receive 401.
+- **AC1** — every request made by the employee, with `status`, `decidedBy`, and `decidedAt`.
+- **AC2** — requests with `is_deleted = true` are excluded from `requests` and `events`, but the row
+  and its audit history still exist in the table (no purge, no hard delete).
+- **404** — unknown or malformed `userId`. `requestReference` is derived from the request UUID
+  (`LR-` + last eight hex characters) because `leave_requests` has no reference column.
+- The `/audit` page renders the same report for a selected employee; the last-accrual stat stays
+  mock data until TASK-017.
+
 ## Project structure
 
 ```
@@ -214,11 +246,12 @@ app/
     requests/            My requests, new request, request detail
     balance/             DB-backed confirmed vs pending balances
     approvals/           DB manager queue + decisions (HR state explicit)
-    audit/               HR audit explorer
+    audit/               HR audit report (DB-backed, per employee)
     settings/policies/   HR policy read-only view
     forbidden/           403 page
   api/health/            Health probe
   api/leave-requests/    GET/POST + [id]/decision
+  api/audit/             GET /api/audit/:userId (HR admin only)
   globals.css            Tailwind v4 tokens + layered base styles
 components/
   ui/                    Design-system primitives
@@ -245,10 +278,11 @@ proxy.ts                 Next 16 route guard (not middleware.ts)
   cookies; no provider is called. `proxy.ts` guards every non-public route and API path. Server
   components read the session with `getSession()`.
 - **Split data.** `GET`/`POST /api/leave-requests`, the decision route, `/requests/new`, `/balance`,
-  and the manager `/approvals` queue use Postgres. The dashboard, request list/detail, audit, and
+  `/audit`, and the manager `/approvals` queue use Postgres. The dashboard, request list/detail, and
   policy pages still read `lib/mock/data.ts`.
-- **Route handlers.** `/api/health`, `GET`/`POST /api/leave-requests`, and
-  `POST /api/leave-requests/:id/decision`. Accrual and audit endpoints do not exist yet.
+- **Route handlers.** `/api/health`, `GET`/`POST /api/leave-requests`,
+  `POST /api/leave-requests/:id/decision`, and `GET /api/audit/:userId`. The accrual endpoint does
+  not exist yet.
 - **Manager queue scope.** `scope=team` is manager-only. It uses
   `WHERE employee.manager_id = :current_user_id`; employees and HR receive 403. The HR override
   view is not part of TASK-013.
