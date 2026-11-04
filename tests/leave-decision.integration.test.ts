@@ -12,8 +12,9 @@ describe.skipIf(!hasDatabase)("leave decision", () => {
   let daniel!: DbUser;
   let maya!: DbUser;
   let vacation!: LeaveType;
+  let sick!: LeaveType;
   let unpaid!: LeaveType;
-  let originalBalance = 0;
+  const originalBalances = new Map<string, number>();
   const createdIds: string[] = [];
 
   beforeAll(async () => {
@@ -26,26 +27,30 @@ describe.skipIf(!hasDatabase)("leave decision", () => {
     }
 
     const vacationType = types.find((type) => type.name === "Vacation");
+    const sickType = types.find((type) => type.name === "Sick");
     const unpaidType = types.find((type) => type.name === "Unpaid");
 
-    if (!vacationType || !unpaidType) {
+    if (!vacationType || !sickType || !unpaidType) {
       throw new Error("Seed leave types are missing; run npm run db:seed.");
     }
 
     daniel = manager;
     maya = employee;
     vacation = vacationType;
+    sick = sickType;
     unpaid = unpaidType;
 
-    const [balance] = await getDb()<{ balance: string }[]>`
-      select balance
-      from leave_balances
-      where user_id = ${maya.id}
-        and leave_type_id = ${vacation.id}
-      limit 1
-    `;
+    for (const type of [vacation, sick]) {
+      const [balance] = await getDb()<{ balance: string }[]>`
+        select balance
+        from leave_balances
+        where user_id = ${maya.id}
+          and leave_type_id = ${type.id}
+        limit 1
+      `;
 
-    originalBalance = Number(balance?.balance ?? 0);
+      originalBalances.set(type.id, Number(balance?.balance ?? 0));
+    }
   });
 
   afterAll(async () => {
@@ -61,25 +66,31 @@ describe.skipIf(!hasDatabase)("leave decision", () => {
       `;
     }
 
-    await getDb()`
-      update leave_balances
-      set balance = ${originalBalance}
-      where user_id = ${maya.id}
-        and leave_type_id = ${vacation.id}
-    `;
+    for (const [leaveTypeId, balance] of originalBalances) {
+      await getDb()`
+        update leave_balances
+        set balance = ${balance}
+        where user_id = ${maya.id}
+          and leave_type_id = ${leaveTypeId}
+      `;
+    }
 
     await getDb().end({ timeout: 5 });
   });
 
-  async function balance(): Promise<number> {
+  async function balanceFor(leaveTypeId: string): Promise<number> {
     const [row] = await getDb()<{ balance: string }[]>`
       select balance
       from leave_balances
       where user_id = ${maya.id}
-        and leave_type_id = ${vacation.id}
+        and leave_type_id = ${leaveTypeId}
       limit 1
     `;
     return Number(row?.balance ?? 0);
+  }
+
+  async function balance(): Promise<number> {
+    return balanceFor(vacation.id);
   }
 
   async function createPending(
@@ -286,5 +297,46 @@ describe.skipIf(!hasDatabase)("leave decision", () => {
         and leave_type_id = ${unpaid.id}
     `;
     expect(balanceRows[0]?.count).toBe("0");
+  });
+
+  it("approves a Sick request and leaves Vacation and Unpaid untouched", async () => {
+    const sickBefore = await balanceFor(sick.id);
+    const vacationBefore = await balanceFor(vacation.id);
+    const pending = await createPending(
+      sick,
+      "2031-05-05",
+      "2031-05-06",
+      "Decision test — sick only.",
+    );
+
+    const decision = await decideLeaveRequest({
+      requestId: pending.request.id,
+      managerId: daniel.id,
+      managerName: daniel.name,
+      decision: "approved",
+    });
+
+    expect(decision.request.status).toBe("approved");
+    expect(decision.balance?.leaveTypeId).toBe(sick.id);
+    expect(decision.balance?.previous).toBe(sickBefore);
+    expect(decision.balance?.next).toBe(sickBefore - 2);
+
+    await expect(balanceFor(sick.id)).resolves.toBe(sickBefore - 2);
+    await expect(balanceFor(vacation.id)).resolves.toBe(vacationBefore);
+
+    const unpaidRows = await getDb()<{ count: string }[]>`
+      select count(*)::text as count
+      from leave_balances
+      where user_id = ${maya.id}
+        and leave_type_id = ${unpaid.id}
+    `;
+    expect(unpaidRows[0]?.count).toBe("0");
+
+    const audits = await getDb()<{ action: string }[]>`
+      select action
+      from audit_log
+      where leave_request_id = ${pending.request.id}
+    `;
+    expect(audits.filter((audit) => audit.action === "approved")).toHaveLength(1);
   });
 });
