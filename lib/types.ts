@@ -39,7 +39,8 @@ export interface LeaveBalance {
   confirmed: number | null;
   pending: number;
   accrualPerMonth: number | null;
-  lastAccruedAt: string;
+  /** Latest `accrual_ledger.created_at` for this leave type; null means no accrual has ever run. */
+  lastAccruedAt: string | null;
 }
 
 export interface Policy {

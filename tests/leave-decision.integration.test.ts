@@ -2,7 +2,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ERROR_CODES } from "@/lib/api/errors";
 import { getDb } from "@/lib/db/client";
-import { createLeaveRequest, decideLeaveRequest, listLeaveTypes } from "@/lib/db/leave";
+import {
+  createLeaveRequest,
+  decideLeaveRequest,
+  getBalancesForUser,
+  listLeaveTypes,
+} from "@/lib/db/leave";
 import { findUserByEmail, type DbUser } from "@/lib/db/users";
 import type { LeaveType } from "@/lib/types";
 
@@ -91,6 +96,11 @@ describe.skipIf(!hasDatabase)("leave decision", () => {
 
   async function balance(): Promise<number> {
     return balanceFor(vacation.id);
+  }
+
+  async function accrualFor(leaveTypeId: string): Promise<string | null> {
+    const balances = await getBalancesForUser(maya.id);
+    return balances.find((balance) => balance.leaveType.id === leaveTypeId)?.lastAccruedAt ?? null;
   }
 
   async function createPending(
@@ -302,6 +312,7 @@ describe.skipIf(!hasDatabase)("leave decision", () => {
   it("approves a Sick request and leaves Vacation and Unpaid untouched", async () => {
     const sickBefore = await balanceFor(sick.id);
     const vacationBefore = await balanceFor(vacation.id);
+    const accrualBefore = await accrualFor(sick.id);
     const pending = await createPending(
       sick,
       "2031-05-05",
@@ -323,6 +334,7 @@ describe.skipIf(!hasDatabase)("leave decision", () => {
 
     await expect(balanceFor(sick.id)).resolves.toBe(sickBefore - 2);
     await expect(balanceFor(vacation.id)).resolves.toBe(vacationBefore);
+    await expect(accrualFor(sick.id)).resolves.toBe(accrualBefore);
 
     const unpaidRows = await getDb()<{ count: string }[]>`
       select count(*)::text as count

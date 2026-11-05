@@ -26,12 +26,25 @@ describe.skipIf(!hasDatabase)("leave balance data", () => {
     const sick = balances.find((balance) => balance.leaveType.name === "Sick");
     const unpaid = balances.find((balance) => balance.leaveType.name === "Unpaid");
 
-    expect(vacation?.confirmed).toBe(12.5);
-    expect(vacation?.pending).toBe(5);
-    expect(sick?.confirmed).toBe(8);
-    expect(sick?.pending).toBe(0);
-    expect(unpaid?.confirmed).toBeNull();
-    expect(vacation?.lastAccruedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    if (!vacation || !sick || !unpaid) {
+      throw new Error("Seed leave types are missing from the balance query.");
+    }
+
+    expect(vacation.confirmed).toBe(12.5);
+    expect(vacation.pending).toBe(5);
+    expect(sick.confirmed).toBe(8);
+    expect(sick.pending).toBe(0);
+    expect(unpaid.confirmed).toBeNull();
+
+    const [accrual] = await getDb()<{ last_accrued_at: Date | null }[]>`
+      select max(created_at) as last_accrued_at
+      from accrual_ledger
+      where user_id = ${user.id}
+        and leave_type_id = ${vacation.leaveType.id}
+    `;
+
+    expect(vacation.lastAccruedAt).toBe(accrual?.last_accrued_at?.toISOString() ?? null);
+    expect(unpaid.lastAccruedAt).toBeNull();
   });
 
   it("returns active own requests and lets the page filter pending", async () => {

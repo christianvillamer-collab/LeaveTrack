@@ -64,9 +64,9 @@ export function BalanceCard({ balance }: { balance: LeaveBalance }) {
           </dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">Updated</dt>
+          <dt className="text-muted-foreground">Last accrual</dt>
           <dd className="text-foreground mt-0.5 font-semibold">
-            {tracked ? formatDate(balance.lastAccruedAt) : "No accrual"}
+            {tracked && balance.lastAccruedAt ? formatDate(balance.lastAccruedAt) : "No accrual"}
           </dd>
         </div>
       </dl>

@@ -25,7 +25,7 @@ interface LeaveTypeRow {
 
 interface BalanceRow extends LeaveTypeRow {
   balance: string | null;
-  updated_at: Date | null;
+  last_accrued_at: Date | null;
   accrual_per_month: string | null;
   pending_days: string | null;
 }
@@ -138,7 +138,7 @@ export async function getBalancesForUser(userId: string): Promise<LeaveBalance[]
       lt.name,
       lt.tracks_balance,
       lb.balance,
-      lb.updated_at,
+      accrued.last_accrued_at,
       lp.accrual_per_month,
       pending.pending_days
     from leave_types lt
@@ -146,6 +146,14 @@ export async function getBalancesForUser(userId: string): Promise<LeaveBalance[]
       on lb.leave_type_id = lt.id and lb.user_id = ${userId}
     left join leave_policies lp
       on lp.leave_type_id = lt.id and lp.user_id = ${userId}
+    left join (
+      select
+        leave_type_id,
+        max(created_at) as last_accrued_at
+      from accrual_ledger
+      where user_id = ${userId}
+      group by leave_type_id
+    ) accrued on accrued.leave_type_id = lt.id
     left join (
       select
         leave_type_id,
@@ -171,7 +179,8 @@ export async function getBalancesForUser(userId: string): Promise<LeaveBalance[]
     confirmed: row.tracks_balance ? Number(row.balance ?? 0) : null,
     pending: Number(row.pending_days ?? 0),
     accrualPerMonth: row.accrual_per_month === null ? null : Number(row.accrual_per_month),
-    lastAccruedAt: (row.updated_at ?? new Date()).toISOString(),
+    lastAccruedAt:
+      row.tracks_balance && row.last_accrued_at ? row.last_accrued_at.toISOString() : null,
   }));
 }
 
