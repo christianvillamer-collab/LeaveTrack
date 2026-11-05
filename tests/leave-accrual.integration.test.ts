@@ -21,8 +21,7 @@ interface BalanceRow {
 const key = (userId: string, leaveTypeId: string) => `${userId}:${leaveTypeId}`;
 
 describe.skipIf(!hasDatabase)("monthly accrual", () => {
-  // A far-future month keeps the test independent of real accrual history and
-  // of the `updated_at` values the rest of the suite relies on.
+  // A far-future month keeps the test independent of real accrual history.
   const period = `${2400 + Math.floor(Math.random() * 100)}-01-01`;
 
   let policies: PolicyRow[] = [];
@@ -122,7 +121,14 @@ describe.skipIf(!hasDatabase)("monthly accrual", () => {
           and period = ${period}::date
       `;
 
-      expect(balance?.lastAccruedAt).toBe(ledger?.created_at.toISOString());
+      expect(balance).toBeDefined();
+      expect(ledger).toBeDefined();
+
+      if (!balance || !ledger) {
+        throw new Error("The accrual run did not produce a readable ledger balance.");
+      }
+
+      expect(balance.lastAccruedAt).toBe(ledger.created_at.toISOString());
     }
 
     const untracked = await getDb()<{ count: number }[]>`

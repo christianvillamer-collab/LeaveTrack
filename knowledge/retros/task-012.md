@@ -39,9 +39,10 @@ TASK-017's ledger landed, so `lastAccruedAt` no longer comes from `leave_balance
 - `getBalancesForUser` reads `max(accrual_ledger.created_at)` per leave type and returns `null` when
   no accrual has run. Untracked types (Unpaid) are always `null`.
 - The balance page, request form, and `BalanceCard` render “No accrual” instead of a fabricated date.
-- Proof: `leave-decision` asserts an approval leaves `lastAccruedAt` unchanged, `leave-accrual`
-  asserts a run sets it to the ledger row's `created_at`, and `leave-balance` derives its expectation
-  from the ledger (plus Unpaid `null`).
+- Proof: `leave-decision` seeds a ledger row and asserts an approval leaves `lastAccruedAt`
+  unchanged; `leave-accrual` asserts a run sets it to the ledger row's `created_at`; `leave-balance`
+  seeds three rows and asserts the per-user newest timestamp (so `min` or a dropped `user_id`
+  predicate fails the suite) plus Unpaid `null`.
 
 ## Backlog
 

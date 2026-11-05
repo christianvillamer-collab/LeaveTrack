@@ -47,6 +47,56 @@ describe.skipIf(!hasDatabase)("leave balance data", () => {
     expect(unpaid.lastAccruedAt).toBeNull();
   });
 
+  it("takes this user's newest ledger row for the leave type only", async () => {
+    const user = await findUserByEmail("maya.chen@leavetrack.demo");
+    const other = await findUserByEmail("daniel.okafor@leavetrack.demo");
+    expect(user).not.toBeNull();
+    expect(other).not.toBeNull();
+
+    if (!user || !other) {
+      return;
+    }
+
+    const [vacationType] = await getDb()<{ id: string }[]>`
+      select id
+      from leave_types
+      where name = 'Vacation'
+      limit 1
+    `;
+
+    if (!vacationType) {
+      throw new Error("Seed leave types are missing; run npm run db:seed.");
+    }
+
+    const cleanup = async () => {
+      await getDb()`
+        delete from accrual_ledger
+        where user_id in (${user.id}, ${other.id})
+          and period in ('2399-01-01', '2399-02-01', '2399-03-01')
+      `;
+    };
+
+    await cleanup();
+    await getDb()`
+      insert into accrual_ledger (user_id, leave_type_id, period, days, created_at)
+      values
+        (${user.id}, ${vacationType.id}, '2399-01-01', 0.01, timestamptz '2399-01-01 00:00:00+00'),
+        (${user.id}, ${vacationType.id}, '2399-02-01', 0.01, timestamptz '2399-02-01 00:00:00+00'),
+        (${other.id}, ${vacationType.id}, '2399-03-01', 0.01, timestamptz '2399-03-01 00:00:00+00')
+    `;
+
+    try {
+      const balances = await getBalancesForUser(user.id);
+      const vacation = balances.find((balance) => balance.leaveType.id === vacationType.id);
+
+      // Feb is this user's newest row: `min` would return Jan, and dropping the
+      // user predicate would return the other user's later March row.
+      expect(vacation?.lastAccruedAt).toBe(new Date("2399-02-01T00:00:00.000Z").toISOString());
+    } finally {
+      await cleanup();
+    }
+  });
+
   it("returns active own requests and lets the page filter pending", async () => {
     const user = await findUserByEmail("maya.chen@leavetrack.demo");
     expect(user).not.toBeNull();
