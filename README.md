@@ -175,8 +175,8 @@ fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed fo
 - Confirmed balances come from `leave_balances`; pending is the sum of active pending requests per
   leave type. Pending is never folded into confirmed.
 - `lastAccruedAt` is the latest `accrual_ledger.created_at` for that leave type, or `null` when no
-  accrual has run. Approving or restoring a request no longer moves it, and untracked types (Unpaid)
-  are always `null`.
+  accrual has run. Approving a request no longer moves it, and untracked types (Unpaid) are always
+  `null`.
 - `/balance` uses the same `getMyLeaveData` service server-side; the GET route serves API clients.
 - `/requests`, `/requests/[id]`, and the manager dashboard remain mock-backed for now. The
   `/approvals` queue is DB-backed for managers and now supports approve/reject; HR sees an explicit

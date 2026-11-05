@@ -61,7 +61,7 @@ export default async function BalancePage() {
       <PageHeader
         eyebrow="Time off"
         title="My balance"
-        description="Confirmed balance, pending amounts, and your accrual policy — as of the latest accrual run."
+        description="Confirmed balance, pending amounts, and your accrual policy."
         actions={
           <Button asChild>
             <Link href="/requests/new">
@@ -170,7 +170,7 @@ export default async function BalancePage() {
                 </div>
                 <p className="text-caption text-muted-foreground mt-3">
                   {lastAccruedAt
-                    ? `Balances as of ${formatDate(lastAccruedAt)}. Monthly accrual updates them after a completed run.`
+                    ? `Last accrual ${formatDate(lastAccruedAt)}. Approvals may have changed confirmed balances since.`
                     : "No accrual has run yet. Monthly accrual updates balances after a completed run."}
                 </p>
               </CardContent>

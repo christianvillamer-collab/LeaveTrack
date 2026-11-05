@@ -27,8 +27,8 @@ accrual_ledger   (id, user_id FK, leave_type_id FK, period date, days numeric, c
 ```
 
 - `accrual_ledger` is the authoritative monthly accrual marker (one row per user/type/month) and the
-  source of `lastAccruedAt`. `leave_balances.updated_at` cannot serve that role because approval and
-  restore writes also move it.
+  source of `lastAccruedAt`. `leave_balances.updated_at` cannot serve that role because any balance
+  write (an approval, for example) moves it.
 
 - `leave_requests.is_deleted` — **soft delete only**, per BR-04 (3-year retention). No hard-delete path exists anywhere in the codebase.
 - `users.manager_id` is the sole source of truth for the scoped-visibility rule (US-04). A manager's queue query always filters `WHERE manager_id = :current_user_id`.
