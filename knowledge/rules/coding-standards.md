@@ -54,6 +54,9 @@ Traces to `docs/arch-docs/ARCH-LeaveTrack-v1.0.md`, `ADR-LeaveTrack-E001`, and `
 - Migrations are ordered SQL files in `db/migrations/`; never edit an applied migration — add a new
   one.
 - Seed SQL must be idempotent (fixed UUIDs + `ON CONFLICT DO NOTHING`).
+- Monthly accrual is idempotent through `accrual_ledger` (`user_id`, `leave_type_id`, `period`),
+  never through `leave_balances.updated_at`, which any balance mutation changes. See
+  `knowledge/patterns/accrual-idempotency.md`.
 - Derived display references (for tables with no reference column) must use the **trailing** UUID
   hex segment. Seeded UUIDs share a leading segment (`b0000000-…`), so a first-N slice produces
   duplicate references (`LR-B0000000` for every row).

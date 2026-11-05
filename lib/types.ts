@@ -164,3 +164,10 @@ export interface LeaveDecisionResult {
     next: number;
   } | null;
 }
+
+export interface AccrualResult {
+  period: string;
+  usersAccrued: number;
+  balancesAccrued: number;
+  totalDays: number;
+}

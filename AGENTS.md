@@ -4,11 +4,12 @@
 
 Next.js 16 (App Router) + TypeScript + Tailwind v4 + Postgres/Supabase leave-management app.
 
-**Day 0 scaffold + TASK-011/012/013/014/015/016.** Auth is still a mock httpOnly cookie. Most screens
-read fixtures from `lib/mock/data.ts`; `POST /api/leave-requests` + `/requests/new` write to Postgres,
-and `GET /api/leave-requests` + `/balance` + the manager `/approvals` queue read from it. Managers
-can now approve/reject through `POST /api/leave-requests/:id/decision`, and HR reads per-employee
-reports through `GET /api/audit/:userId` + `/audit`. There is no provider SDK.
+**Day 0 scaffold + TASK-011/012/013/014/015/016/017.** Auth is still a mock httpOnly cookie. Most
+screens read fixtures from `lib/mock/data.ts`; `POST /api/leave-requests` + `/requests/new` write to
+Postgres, and `GET /api/leave-requests` + `/balance` + the manager `/approvals` queue read from it.
+Managers can now approve/reject through `POST /api/leave-requests/:id/decision`, and HR reads
+per-employee reports through `GET /api/audit/:userId` + `/audit`. A monthly cron job accrues balances
+through `GET`/`POST /api/jobs/accrual`. There is no provider SDK.
 Do not wire real auth or the remaining DB-backed pages without a task — that is future Day 1 work.
 
 ## Commands
@@ -70,6 +71,10 @@ npm run db:seed             # idempotent; safe to run twice
   replace `DATABASE_URL`/`DIRECT_URL`.
 - Schema lives in `db/migrations/0001_init.sql`; seeds in `db/seed.sql`. Requests and audit rows
   reject hard deletes at the trigger level. Never add a hard-delete path.
+- The accrual job (`GET`/`POST /api/jobs/accrual`) is the only unauthenticated non-health API path:
+  `proxy.ts` lets it through and the route requires `Authorization: Bearer $CRON_SECRET`. Vercel Cron
+  issues GET, so both verbs share one handler. Idempotency lives in `accrual_ledger`
+  (`user_id`, `leave_type_id`, `period`), never in `leave_balances.updated_at`.
 - Manager scope must be a **SQL predicate** (`WHERE manager_id = :current_user_id`), never a
   client-side filter or post-query array filter. See `knowledge/patterns/manager-scope.md`.
 
