@@ -59,8 +59,10 @@ from accrual_ledger
 where user_id = $1 and leave_type_id = $2
 ```
 
-- `created_at` is the **run time**; `period` is the **month marker**. Show
-  `created_at` to users ("as of …"), keep `period` for idempotency.
+- `created_at` is the **run time**; `period` is the **month marker**. Show it as
+  "Last accrual <date>", keep `period` for idempotency. Approvals can change
+  confirmed balances after that date, so never label the date a balance
+  snapshot.
 - No ledger row means no accrual has ever run — return `null` and render
   "No accrual", never `new Date()` or the balance row's timestamp.
 - Untracked types (`tracks_balance = false`) are always `null`, even if a stray

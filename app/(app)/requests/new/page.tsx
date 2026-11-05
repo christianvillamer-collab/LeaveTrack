@@ -135,9 +135,9 @@ export default async function NewRequestPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Wallet aria-hidden="true" className="text-primary size-5" />
-                  Balance snapshot
+                  Current balances
                 </CardTitle>
-                <CardDescription>As of the last completed accrual.</CardDescription>
+                <CardDescription>Confirmed balance and pending amounts.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 {balances.map((balance) => (
