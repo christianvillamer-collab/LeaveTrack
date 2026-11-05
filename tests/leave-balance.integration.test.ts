@@ -47,7 +47,7 @@ describe.skipIf(!hasDatabase)("leave balance data", () => {
     expect(unpaid.lastAccruedAt).toBeNull();
   });
 
-  it("takes this user's newest ledger row for the leave type only", async () => {
+  it("takes this user's newest ledger row only", async () => {
     const user = await findUserByEmail("maya.chen@leavetrack.demo");
     const other = await findUserByEmail("daniel.okafor@leavetrack.demo");
     expect(user).not.toBeNull();
@@ -72,6 +72,7 @@ describe.skipIf(!hasDatabase)("leave balance data", () => {
       await getDb()`
         delete from accrual_ledger
         where user_id in (${user.id}, ${other.id})
+          and leave_type_id = ${vacationType.id}
           and period in ('2399-01-01', '2399-02-01', '2399-03-01')
       `;
     };

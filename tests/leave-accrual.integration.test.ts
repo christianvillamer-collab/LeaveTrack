@@ -121,9 +121,6 @@ describe.skipIf(!hasDatabase)("monthly accrual", () => {
           and period = ${period}::date
       `;
 
-      expect(balance).toBeDefined();
-      expect(ledger).toBeDefined();
-
       if (!balance || !ledger) {
         throw new Error("The accrual run did not produce a readable ledger balance.");
       }
