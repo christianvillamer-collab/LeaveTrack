@@ -123,4 +123,67 @@ describe.skipIf(!hasDatabase)("createLeaveRequest integration", () => {
 
     expect(after?.balance).toBe(before?.balance);
   });
+
+  it("creates an Unpaid request without a balance check", async () => {
+    const user = await findUserByEmail("maya.chen@leavetrack.demo");
+    const leaveTypes = await listLeaveTypes();
+    const unpaid = leaveTypes.find((type) => type.name === "Unpaid");
+
+    expect(user).not.toBeNull();
+    expect(unpaid).toBeDefined();
+
+    if (!user || !unpaid) {
+      return;
+    }
+
+    const [beforeRows] = await getDb()<{ count: string }[]>`
+      select count(*)::text as count
+      from leave_balances
+      where user_id = ${user.id}
+    `;
+
+    const result = await createLeaveRequest({
+      userId: user.id,
+      leaveTypeId: unpaid.id,
+      startDate: "2030-05-01",
+      endDate: "2030-05-10",
+      reason: "Integration test — unpaid leave has no balance policy.",
+    });
+    createdIds.push(result.request.id);
+
+    expect(result.request.status).toBe("pending");
+    expect(result.request.days).toBe(10);
+    expect(result.warning).toEqual({
+      exceedsBalance: false,
+      requestedDays: 10,
+      availableDays: null,
+      message: null,
+    });
+    expect(result.managerNotified).toBe(true);
+
+    const [afterRows] = await getDb()<{ count: string }[]>`
+      select count(*)::text as count
+      from leave_balances
+      where user_id = ${user.id}
+    `;
+    const [unpaidRows] = await getDb()<{ count: string }[]>`
+      select count(*)::text as count
+      from leave_balances
+      where user_id = ${user.id}
+        and leave_type_id = ${unpaid.id}
+    `;
+
+    expect(afterRows?.count).toBe(beforeRows?.count);
+    expect(unpaidRows?.count).toBe("0");
+
+    const audits = await getDb()<{ action: string; actor_id: string }[]>`
+      select action, actor_id
+      from audit_log
+      where leave_request_id = ${result.request.id}
+    `;
+
+    expect(audits).toHaveLength(1);
+    expect(audits[0]?.action).toBe("submitted");
+    expect(audits[0]?.actor_id).toBe(user.id);
+  });
 });

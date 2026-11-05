@@ -19,6 +19,7 @@
 | `retros/task-015.md`              | TASK-015 audit report results, soft-delete proof, reference caveat  |
 | `retros/task-016.md`              | TASK-016 mobile matrix, 375px form/balance results, hardening notes |
 | `retros/task-017.md`              | TASK-017 accrual ledger, idempotency proof, cron auth, backlog      |
+| `retros/task-018.md`              | TASK-018 per-type isolation proof, Unpaid bypass, test gotchas      |
 
 Source documents remain authoritative:
 

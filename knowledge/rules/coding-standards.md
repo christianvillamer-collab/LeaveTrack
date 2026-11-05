@@ -91,7 +91,16 @@ Traces to `docs/arch-docs/ARCH-LeaveTrack-v1.0.md`, `ADR-LeaveTrack-E001`, and `
 - Every new API route needs: success case, validation failure, unauthenticated, forbidden, and the
   scoping case (for manager routes).
 - Every migration change needs a CI assertion for the affected table/index/trigger.
-- Run `npm run lint && npm run typecheck && npm run test && npm run build` before opening a PR.
+- DB integration suites share one Postgres and assert exact balances/counts. Never run two of them
+  concurrently — no parallel shells, and no multi-file `vitest run tests/*.integration.test.ts`.
+  `npm run test:db` runs each file in its own sequential process for exactly this reason. `npm test`
+  also collects these files; with `DATABASE_URL` exported it runs them in parallel, so use
+  `test:db` for DB work.
+- After switching branches, delete `.next` before `npm run typecheck`; its generated
+  `types/validator.ts` still references routes from the previous branch and fails with TS2307.
+- Run `npm run lint && npm run typecheck && npm run test && npm run build` before opening a PR, with
+  `DATABASE_URL` unset — `npm test` does not read `.env.local`, and an exported URL makes it run the
+  integration files in parallel. Run `npm run test:db` separately for DB coverage.
 
 ## Git
 
