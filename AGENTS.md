@@ -62,8 +62,9 @@ npm run db:seed             # idempotent; safe to run twice
   require a reject reason, and insert the append-only audit row in the same transaction. Over-balance
   approval is 409 (HR override future); Unpaid approval skips the balance.
 - Balance reads use `getMyLeaveData`/`getBalancesForUser`: confirmed from `leave_balances`, pending
-  from active pending requests. `lastAccruedAt` is `leave_balances.updated_at` until TASK-017 has
-  an accrual ledger.
+  from active pending requests. `lastAccruedAt` is the latest `accrual_ledger.created_at` for that
+  leave type (`null` when no accrual has run, and always `null` for untracked types) — never
+  `leave_balances.updated_at`, which moves on approval.
 - `scope=team` is manager-only (DB role). The direct-report filter is SQL:
   `employee.manager_id = :current_user_id`. Never post-filter in JS. HR override is separate; the
   `/approvals` page shows HR an explicit boundary state.

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { runAccrual } from "@/lib/db/accrual";
 import { getDb } from "@/lib/db/client";
+import { getBalancesForUser } from "@/lib/db/leave";
 
 const hasDatabase = Boolean(process.env.DATABASE_URL);
 
@@ -20,8 +21,7 @@ interface BalanceRow {
 const key = (userId: string, leaveTypeId: string) => `${userId}:${leaveTypeId}`;
 
 describe.skipIf(!hasDatabase)("monthly accrual", () => {
-  // A far-future month keeps the test independent of real accrual history and
-  // of the `updated_at` values the rest of the suite relies on.
+  // A far-future month keeps the test independent of real accrual history.
   const period = `${2400 + Math.floor(Math.random() * 100)}-01-01`;
 
   let policies: PolicyRow[] = [];
@@ -106,6 +106,26 @@ describe.skipIf(!hasDatabase)("monthly accrual", () => {
       const after = Number(balancesAfter.get(pair) ?? 0);
 
       expect(after - before).toBeCloseTo(Number(policy.accrual_per_month), 2);
+    }
+
+    const sample = policies[0];
+
+    if (sample) {
+      const balances = await getBalancesForUser(sample.user_id);
+      const balance = balances.find((item) => item.leaveType.id === sample.leave_type_id);
+      const [ledger] = await getDb()<{ created_at: Date }[]>`
+        select created_at
+        from accrual_ledger
+        where user_id = ${sample.user_id}
+          and leave_type_id = ${sample.leave_type_id}
+          and period = ${period}::date
+      `;
+
+      if (!balance || !ledger) {
+        throw new Error("The accrual run did not produce a readable ledger balance.");
+      }
+
+      expect(balance.lastAccruedAt).toBe(ledger.created_at.toISOString());
     }
 
     const untracked = await getDb()<{ count: number }[]>`

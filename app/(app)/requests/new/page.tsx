@@ -49,6 +49,13 @@ export default async function NewRequestPage() {
     leaveTypeId: balance.leaveType.id,
     available: balance.confirmed,
   }));
+  const lastAccruedAt = balances.reduce<string | null>(
+    (latest, balance) =>
+      balance.lastAccruedAt && (!latest || balance.lastAccruedAt > latest)
+        ? balance.lastAccruedAt
+        : latest,
+    null,
+  );
 
   return (
     <div className="space-y-6">
@@ -128,9 +135,9 @@ export default async function NewRequestPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Wallet aria-hidden="true" className="text-primary size-5" />
-                  Balance snapshot
+                  Current balances
                 </CardTitle>
-                <CardDescription>As of the last completed accrual.</CardDescription>
+                <CardDescription>Confirmed balance and pending amounts.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 {balances.map((balance) => (
@@ -152,7 +159,7 @@ export default async function NewRequestPage() {
                   </div>
                 ))}
                 <p className="text-caption text-muted-foreground">
-                  Updated {formatDate(balances[0]?.lastAccruedAt ?? new Date().toISOString())}
+                  {lastAccruedAt ? `Last accrual ${formatDate(lastAccruedAt)}` : "No accrual yet"}
                 </p>
               </CardContent>
             </Card>

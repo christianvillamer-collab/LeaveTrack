@@ -46,9 +46,12 @@ export default async function BalancePage() {
   const { balances, requests } = data;
   const pendingRequests = requests.filter((request) => request.status === "pending");
   const trackedBalances = balances.filter((balance) => balance.leaveType.tracksBalance);
-  const lastUpdated = trackedBalances.reduce(
-    (latest, balance) => (balance.lastAccruedAt > latest ? balance.lastAccruedAt : latest),
-    trackedBalances[0]?.lastAccruedAt ?? "",
+  const lastAccruedAt = trackedBalances.reduce<string | null>(
+    (latest, balance) =>
+      balance.lastAccruedAt && (!latest || balance.lastAccruedAt > latest)
+        ? balance.lastAccruedAt
+        : latest,
+    null,
   );
   const totalConfirmed = balances.reduce((total, balance) => total + (balance.confirmed ?? 0), 0);
   const ready = Boolean(user) && balances.length > 0;
@@ -58,7 +61,7 @@ export default async function BalancePage() {
       <PageHeader
         eyebrow="Time off"
         title="My balance"
-        description="Confirmed balance, pending amounts, and your accrual policy — as of the latest balance update."
+        description="Confirmed balance, pending amounts, and your accrual policy."
         actions={
           <Button asChild>
             <Link href="/requests/new">
@@ -166,8 +169,9 @@ export default async function BalancePage() {
                   {formatDays(totalConfirmed)} across tracked types
                 </div>
                 <p className="text-caption text-muted-foreground mt-3">
-                  Balances as of {lastUpdated ? formatDate(lastUpdated) : "—"}. Monthly accrual
-                  updates them after a completed run.
+                  {lastAccruedAt
+                    ? `Last accrual ${formatDate(lastAccruedAt)}. Approvals may have changed confirmed balances since.`
+                    : "No accrual has run yet. Monthly accrual updates balances after a completed run."}
                 </p>
               </CardContent>
             </Card>

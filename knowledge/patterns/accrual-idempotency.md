@@ -48,11 +48,38 @@ Why this shape:
   on the next run, and concurrent triggers are safe.
 - Numeric columns only; never add accrual in JavaScript floats.
 
+## Reading "last accrual" back
+
+The same reasoning applies to the read side. `lastAccruedAt` must come from the
+ledger, not from `leave_balances.updated_at`:
+
+```sql
+select max(created_at) as last_accrued_at
+from accrual_ledger
+where user_id = $1 and leave_type_id = $2
+```
+
+- `created_at` is the **run time**; `period` is the **month marker**. Show it as
+  "Last accrual <date>", keep `period` for idempotency. Approvals can change
+  confirmed balances after that date, so never label the date a balance
+  snapshot.
+- No ledger row means no accrual has ever run — return `null` and render
+  "No accrual", never `new Date()` or the balance row's timestamp.
+- Untracked types (`tracks_balance = false`) are always `null`, even if a stray
+  ledger row exists.
+- Keep the field nullable through the whole stack (`LeaveBalance.lastAccruedAt`,
+  API responses, every render site) so callers cannot accidentally format a
+  fabricated value.
+
 ## Required tests
 
 - Run once: each tracked policy balance increases by exactly `accrual_per_month`.
 - Run again in the same month: zero rows recorded, balances unchanged.
 - `tracks_balance = false` (Unpaid) and zero-rate policies never produce a row.
+- An approval after an accrual run leaves `lastAccruedAt` unchanged (the
+  `leave_balances` update trigger must not be conflated with an accrual).
+- A run sets `lastAccruedAt` to that ledger row's `created_at`, and a balance
+  read with no ledger row returns `null`.
 - Snapshot and restore balances in `afterAll`, and delete only the test period's
   ledger rows, so the rest of the DB suite keeps its seeded expectations.
 

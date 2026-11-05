@@ -153,7 +153,7 @@ fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed fo
       "confirmed": 12.5,
       "pending": 5,
       "accrualPerMonth": 1.25,
-      "lastAccruedAt": "2026-11-01T00:00:00.000Z"
+      "lastAccruedAt": null
     }
   ],
   "requests": [
@@ -174,8 +174,9 @@ fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed fo
   manager's direct reports + their active requests; employees/HR receive 403.
 - Confirmed balances come from `leave_balances`; pending is the sum of active pending requests per
   leave type. Pending is never folded into confirmed.
-- `lastAccruedAt` reflects `leave_balances.updated_at`, so any balance change (an accrual or an
-  approved request) moves it. `accrual_ledger` is the authoritative monthly marker.
+- `lastAccruedAt` is the latest `accrual_ledger.created_at` for that leave type, or `null` when no
+  accrual has run. Approving a request no longer moves it, and untracked types (Unpaid) are always
+  `null`.
 - `/balance` uses the same `getMyLeaveData` service server-side; the GET route serves API clients.
 - `/requests`, `/requests/[id]`, and the manager dashboard remain mock-backed for now. The
   `/approvals` queue is DB-backed for managers and now supports approve/reject; HR sees an explicit

@@ -32,14 +32,31 @@
 - Unpaid `BalanceCard` showed a fabricated “Updated” date even though Unpaid has no balance row.
   It now renders “No accrual”; tracked types keep the DB timestamp.
 
+## Follow-up (2026-11-05) — AC1 made true
+
+TASK-017's ledger landed, so `lastAccruedAt` no longer comes from `leave_balances.updated_at`:
+
+- `getBalancesForUser` reads `max(accrual_ledger.created_at)` per leave type and returns `null` when
+  no accrual has run. Untracked types (Unpaid) are always `null`.
+- The balance page, request form, and `BalanceCard` render “No accrual” instead of a fabricated date.
+- Proof: `leave-decision` seeds a ledger row and asserts an approval leaves `lastAccruedAt`
+  unchanged; `leave-accrual` asserts a run sets it to the ledger row's `created_at`; `leave-balance`
+  seeds three rows and asserts the per-user newest timestamp (so `min` or a dropped `user_id`
+  predicate fails the suite) plus Unpaid `null`.
+
 ## Backlog
 
-- [ ] TASK-017: add an accrual-run ledger and expose the true “last accrual” timestamp instead of
-      `leave_balances.updated_at` (which also moves on approval).
+- [x] TASK-017: add an accrual-run ledger and expose the true “last accrual” timestamp instead of
+      `leave_balances.updated_at` (which also moves on approval). — done 2026-11-05.
 - [ ] TASK-013: add `scope=team` with the SQL `manager_id` predicate; today it is rejected with 400.
 - [ ] `/requests`, `/requests/[id]`, and `/approvals` still read mock data.
-- [ ] `getBalancesForUser` still returns a current `lastAccruedAt` for Unpaid; the UI hides it, but
+- [x] `getBalancesForUser` still returns a current `lastAccruedAt` for Unpaid; the UI hides it, but
       API clients see a timestamp. Make the field nullable/policy-derived when the accrual model
-      settles.
+      settles. — done 2026-11-05: nullable and policy-derived.
 - [ ] A non-configuration DB connection failure on `/balance` falls through to the error boundary;
       add a “database unavailable” state if that becomes noisy.
+- [ ] `lastAccruedAt` is now nullable in `GET /api/leave-requests?scope=mine`, but only the DB layer
+      is tested; add an HTTP-level test of the balance response shape (null when no ledger row,
+      timestamp after a run) so the contract change is locked at the API boundary.
+- [ ] `tests/leave-balance.integration.test.ts` still asserts exact seeded numbers (12.5 / 5 / 8).
+      Derive confirmed/pending from the request rows instead so a seed tweak does not fail the suite.
