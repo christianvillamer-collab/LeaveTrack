@@ -95,7 +95,9 @@ Traces to `docs/arch-docs/ARCH-LeaveTrack-v1.0.md`, `ADR-LeaveTrack-E001`, and `
   `test:db` for DB work.
 - After switching branches, delete `.next` before `npm run typecheck`; its generated
   `types/validator.ts` still references routes from the previous branch and fails with TS2307.
-- Run `npm run lint && npm run typecheck && npm run test && npm run build` before opening a PR.
+- Run `npm run lint && npm run typecheck && npm run test && npm run build` before opening a PR, with
+  `DATABASE_URL` unset — `npm test` does not read `.env.local`, and an exported URL makes it run the
+  integration files in parallel. Run `npm run test:db` separately for DB coverage.
 
 ## Git
 

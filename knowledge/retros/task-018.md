@@ -13,8 +13,9 @@
 ## Acceptance criteria
 
 - AC1 — PASS: approving a 2-day Sick request moves only the Sick row and reports
-  `balance.leaveTypeId = Sick`. Vacation is byte-identical before/after, Unpaid still has no balance
-  row, and exactly one `approved` audit row is written.
+  `balance.leaveTypeId = Sick`. Vacation's numeric balance is unchanged
+  (`tests/leave-decision.integration.test.ts:325`), Unpaid still has no balance row, and exactly one
+  `approved` audit row is written.
 - AC2 — PASS: a 10-day Unpaid submission is created `pending` with
   `warning = { exceedsBalance: false, requestedDays: 10, availableDays: null, message: null }`, no
   balance row appears, the user's balance-row count is unchanged, and a `submitted` audit row exists.
@@ -26,7 +27,7 @@
 - `tests/leave-request.integration.test.ts` — adds the AC2 Unpaid submission test.
 - `README.md` — documents per-type isolation and Unpaid's no-policy/no-balance behavior.
 - No production code changed. Both ACs already held: `evaluateBalanceWarning` early-returns for
-  `tracksBalance = false` (`lib/domain/leave.ts:20-27`), `createLeaveRequest` only reads a balance
+  `tracksBalance = false` (`lib/domain/leave.ts:19-26`), `createLeaveRequest` only reads a balance
   when tracked (`lib/db/leave.ts:446-459`), and `decideLeaveRequest` selects/updates by the request's
   own `leaveType.id` (`lib/db/leave.ts:327-360`).
 
