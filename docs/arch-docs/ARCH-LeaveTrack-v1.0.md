@@ -22,7 +22,13 @@ leave_requests   (id, user_id FK, leave_type_id FK, start_date, end_date, reason
                   status[pending|approved|rejected], decided_by FK -> users.id nullable,
                   decided_at nullable, is_deleted boolean default false, created_at)
 audit_log        (id, leave_request_id FK, actor_id FK, action, occurred_at)
+accrual_ledger   (id, user_id FK, leave_type_id FK, period date, days numeric, created_at,
+                  unique (user_id, leave_type_id, period))
 ```
+
+- `accrual_ledger` is the authoritative monthly accrual marker (one row per user/type/month) and the
+  source of `lastAccruedAt`. `leave_balances.updated_at` cannot serve that role because approval and
+  restore writes also move it.
 
 - `leave_requests.is_deleted` — **soft delete only**, per BR-04 (3-year retention). No hard-delete path exists anywhere in the codebase.
 - `users.manager_id` is the sole source of truth for the scoped-visibility rule (US-04). A manager's queue query always filters `WHERE manager_id = :current_user_id`.
