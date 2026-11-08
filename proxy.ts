@@ -1,14 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { errorEnvelope } from "@/lib/api/errors";
-import { canViewRequest } from "@/lib/auth/access";
-import { canAccessPath } from "@/lib/auth/session";
-import { ROLE_HOME, isRole } from "@/lib/auth/roles";
-import { requestById } from "@/lib/mock/data";
+import { ERROR_CODES, errorEnvelope } from "@/lib/api/errors";
+import { createSupabaseProxyClient, isAuthConfigured } from "@/lib/auth/supabase";
 
 // `/api/jobs/accrual` is the system cron route: it has no user session and
-// authenticates itself with CRON_SECRET, so it must bypass the mock cookie gate.
-const PUBLIC_PATHS = new Set(["/login", "/api/health", "/api/jobs/accrual", "/forbidden"]);
+// authenticates itself with CRON_SECRET. `/auth/callback` must be reachable
+// before a session exists so it can exchange the provider code.
+const PUBLIC_PATHS = new Set([
+  "/login",
+  "/auth/callback",
+  "/api/health",
+  "/api/jobs/accrual",
+  "/forbidden",
+]);
 const ASSET_PATTERN = /\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|xml|woff2?)$/i;
 
 function isPublic(pathname: string): boolean {
@@ -17,24 +21,65 @@ function isPublic(pathname: string): boolean {
   );
 }
 
-export function proxy(request: NextRequest) {
+function noStore(headers?: HeadersInit): Headers {
+  const result = new Headers(headers);
+  result.set("Cache-Control", "no-store");
+  return result;
+}
+
+function apiError(
+  code: (typeof ERROR_CODES)[keyof typeof ERROR_CODES],
+  message: string,
+  status: number,
+) {
+  return NextResponse.json(errorEnvelope(code, message), {
+    status,
+    headers: noStore(),
+  });
+}
+
+type ClaimsResult = {
+  data: { claims: { sub?: string } } | null;
+  error: unknown;
+};
+
+/**
+ * Authentication gate only. Authorization (role and relationship scoping) stays
+ * in the pages, route handlers, and the DB — E2-03 centralizes it. The proxy
+ * must not trust provider claims for roles (ADR-E004).
+ */
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const role = request.cookies.get("mock-role")?.value;
 
   if (isPublic(pathname)) {
-    if (pathname === "/login" && isRole(role)) {
-      return NextResponse.redirect(new URL(ROLE_HOME, request.url));
-    }
-
     return NextResponse.next();
   }
 
-  if (!isRole(role)) {
+  if (!isAuthConfigured()) {
     if (pathname.startsWith("/api/")) {
-      return NextResponse.json(errorEnvelope("UNAUTHENTICATED", "Authentication is required."), {
-        status: 401,
-        headers: { "Cache-Control": "no-store" },
-      });
+      return apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Authentication is not configured.", 503);
+    }
+
+    return NextResponse.redirect(new URL("/login", request.url));
+  }
+
+  let client: ReturnType<typeof createSupabaseProxyClient> | null = null;
+  let claims: ClaimsResult | null = null;
+
+  try {
+    client = createSupabaseProxyClient(request);
+    claims = (await client.supabase.auth.getClaims()) as ClaimsResult;
+  } catch {
+    // A malformed URL or an unreachable auth server must fail closed rather
+    // than surface a 500 on every route.
+    claims = null;
+  }
+
+  // `getClaims()` verifies asymmetric JWTs locally and falls back to the auth
+  // server for symmetric projects, so a missing `sub` means no valid session.
+  if (!client || !claims?.data?.claims.sub || claims.error) {
+    if (pathname.startsWith("/api/")) {
+      return apiError(ERROR_CODES.UNAUTHENTICATED, "Authentication is required.", 401);
     }
 
     const loginUrl = new URL("/login", request.url);
@@ -42,30 +87,7 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (!canAccessPath(role, pathname)) {
-    if (pathname.startsWith("/api/")) {
-      return NextResponse.json(
-        errorEnvelope("FORBIDDEN", "You do not have access to this resource."),
-        { status: 403, headers: { "Cache-Control": "no-store" } },
-      );
-    }
-
-    return NextResponse.redirect(new URL("/forbidden", request.url));
-  }
-
-  // Day 0 only: record-level guard so a forbidden request returns 307 before
-  // streaming starts. Day 1 replaces this fixture lookup with the scoped SQL
-  // query; the page-level check in lib/auth/access.ts stays as defense in depth.
-  const detailMatch = /^\/requests\/([^/]+)$/.exec(pathname);
-  if (detailMatch) {
-    const record = requestById(decodeURIComponent(detailMatch[1]));
-
-    if (record && !canViewRequest({ role, name: "", email: "" }, record)) {
-      return NextResponse.redirect(new URL("/forbidden", request.url));
-    }
-  }
-
-  return NextResponse.next();
+  return client.response();
 }
 
 export const config = {
