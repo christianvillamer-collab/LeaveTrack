@@ -7,6 +7,7 @@
 | `design-system.md`                | Day 0 design tokens, components, states, layout, accessibility      |
 | `patterns/implement-and-test.md`  | E→P→A→V chain used for every task                                   |
 | `patterns/manager-scope.md`       | Security-critical SQL scoping pattern + required tests              |
+| `patterns/auth-session.md`        | Verified identity → DB role mapping, fail-closed rules + tests      |
 | `patterns/accrual-idempotency.md` | Ledger-based monthly accrual, atomic credit, required tests         |
 | `patterns/api-endpoint.md`        | Template for Day 1 route handlers                                   |
 | `prompts/dev/implement-task.md`   | Prompt for a CSV task                                               |

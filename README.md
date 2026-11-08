@@ -4,23 +4,23 @@ Self-service leave requests, scoped manager approvals, and a three-year audit tr
 ~800-person organisation.
 
 This repository contains the **Day 0 production scaffold** plus the first Day 1 slices: TASK-011
-request submission, TASK-012 balance visibility, and TASK-013/014 manager queue + decisions.
-Authentication is still mocked with an httpOnly cookie, and the remaining screens still render local
-fixtures. Submission, balances, the manager queue, and approve/reject decisions use Postgres. Real
-auth and the remaining DB-backed pages are future Day 1 tasks.
+request submission, TASK-012 balance visibility, and TASK-013/014 manager queue + decisions, and
+E2-02 real authentication. Sign-in uses Supabase Auth; the remaining screens still render local
+fixtures. Submission, balances, the manager queue, approve/reject decisions, and the session's
+employee mapping use Postgres. The remaining DB-backed pages are future Day 1 tasks.
 
 ## Stack
 
-| Layer        | Choice                                                         |
-| ------------ | -------------------------------------------------------------- |
-| App          | Next.js 16 (App Router), React 19, TypeScript                  |
-| Styling      | Tailwind CSS v4 (CSS-first `@theme` tokens), self-hosted Inter |
-| Data         | Postgres via Supabase, pooled connection (`postgres.js`)       |
-| Auth (Day 0) | Mock httpOnly cookie session, 8-hour expiry                    |
-| Logging      | Pino structured JSON                                           |
-| Validation   | Zod                                                            |
-| Tests        | Vitest                                                         |
-| Deploy       | Vercel (app) + Supabase (Postgres)                             |
+| Layer      | Choice                                                         |
+| ---------- | -------------------------------------------------------------- |
+| App        | Next.js 16 (App Router), React 19, TypeScript                  |
+| Styling    | Tailwind CSS v4 (CSS-first `@theme` tokens), self-hosted Inter |
+| Data       | Postgres via Supabase, pooled connection (`postgres.js`)       |
+| Auth       | Supabase Auth via `@supabase/ssr` (httpOnly cookies)           |
+| Logging    | Pino structured JSON                                           |
+| Validation | Zod                                                            |
+| Tests      | Vitest                                                         |
+| Deploy     | Vercel (app) + Supabase (Postgres)                             |
 
 ## Quick start
 
@@ -30,34 +30,35 @@ npm run env:setup    # creates a gitignored .env.local (local defaults)
 npm run db:up        # optional local Postgres 16 on port 55432 (Docker)
 npm run db:migrate
 npm run db:seed
+npm run auth:seed    # creates confirmed Supabase Auth users for seeded employees
 npm run dev
 ```
 
-`npm run env:setup` never overwrites an existing `.env.local`. If you use Supabase instead of the
-local Docker database, replace `DATABASE_URL` and `DIRECT_URL` in `.env.local` and skip `db:up`.
-The mock pages work without a database; the DB-backed pages need these values.
+`npm run env:setup` never overwrites an existing `.env.local`. Sign-in requires a Supabase project:
+set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and
+`SEED_AUTH_PASSWORD` in `.env.local`. If you use Supabase instead of the local Docker database,
+replace `DATABASE_URL` and `DIRECT_URL` too and skip `db:up`. There is no mock-login fallback: with
+an empty Supabase configuration the login page renders a configuration notice.
 
-Open <http://localhost:3000>. You are redirected to `/login`; any valid email and any password
-work. Pick a demo role:
+Open <http://localhost:3000>. You are redirected to `/login`; sign in with one of the seeded
+accounts below (the password is `SEED_AUTH_PASSWORD`):
 
 - **Employee** — Maya Chen, own requests and balances
 - **Manager** — Daniel Okafor, approvals for five direct reports only
 - **HR Admin** — Priya Nair, audit log and policies; the approvals override is not part of
   TASK-013
 
-No `.env` file is needed to browse the mock pages. For DB-backed pages, either use the generated
-local defaults or point the two URLs at Supabase:
-
 ```bash
 npm run env:setup
-# Supabase: replace DATABASE_URL (pooled) and DIRECT_URL (direct)
+# Supabase: replace DATABASE_URL (pooled) and DIRECT_URL (direct), then set the auth values
 npm run db:up          # local Docker Postgres only
 npm run db:migrate
 npm run db:seed
+npm run auth:seed      # idempotent; rerun after reseeding employees
 ```
 
-Submission requires a seeded DB account. The mock login accepts any email, but only these demo
-emails can submit:
+Submission requires a seeded DB account **and** a matching confirmed Supabase Auth user. The demo
+emails are:
 
 - `maya.chen@leavetrack.demo` (Employee, manager Daniel)
 - `daniel.okafor@leavetrack.demo` (Manager)
@@ -65,23 +66,24 @@ emails can submit:
 
 ## Scripts
 
-| Command                | Purpose                                      |
-| ---------------------- | -------------------------------------------- |
-| `npm run dev`          | Local dev server                             |
-| `npm run build`        | Production build (must pass before any PR)   |
-| `npm start`            | Serve the production build                   |
-| `npm run lint`         | ESLint (Next core-web-vitals + TypeScript)   |
-| `npm run typecheck`    | `tsc --noEmit`                               |
-| `npm run test`         | Vitest unit tests (DB integration skipped)   |
-| `npm run test:watch`   | Vitest watch mode                            |
-| `npm run test:db`      | DB integration tests (uses `.env.local`/env) |
-| `npm run format`       | Prettier write (Tailwind class sorting)      |
-| `npm run format:check` | Prettier check                               |
-| `npm run env:setup`    | Create `.env.local` with local defaults      |
-| `npm run db:up`        | Start local Docker Postgres on 55432         |
-| `npm run db:down`      | Stop the local Docker Postgres               |
-| `npm run db:migrate`   | Apply `db/migrations/*.sql`                  |
-| `npm run db:seed`      | Idempotent demo seed                         |
+| Command                | Purpose                                       |
+| ---------------------- | --------------------------------------------- |
+| `npm run dev`          | Local dev server                              |
+| `npm run build`        | Production build (must pass before any PR)    |
+| `npm start`            | Serve the production build                    |
+| `npm run lint`         | ESLint (Next core-web-vitals + TypeScript)    |
+| `npm run typecheck`    | `tsc --noEmit`                                |
+| `npm run test`         | Vitest unit tests (DB integration skipped)    |
+| `npm run test:watch`   | Vitest watch mode                             |
+| `npm run test:db`      | DB integration tests (uses `.env.local`/env)  |
+| `npm run format`       | Prettier write (Tailwind class sorting)       |
+| `npm run format:check` | Prettier check                                |
+| `npm run env:setup`    | Create `.env.local` with local defaults       |
+| `npm run db:up`        | Start local Docker Postgres on 55432          |
+| `npm run db:down`      | Stop the local Docker Postgres                |
+| `npm run db:migrate`   | Apply `db/migrations/*.sql`                   |
+| `npm run db:seed`      | Idempotent demo seed                          |
+| `npm run auth:seed`    | Create confirmed auth users for seeded emails |
 
 Quality order: `lint → typecheck → test → build`.
 
@@ -99,6 +101,8 @@ npm run db:seed
 ```
 
 - The app builds and most pages render with no database configured.
+- Sign-in and every authenticated page need a Supabase Auth project plus a migrated DB, because the
+  session maps the verified email to a `users` row.
 - `/requests/new`, `/balance`, `/audit`, `GET /api/leave-requests`, `POST /api/leave-requests`, and
   `GET /api/audit/:userId` require a configured, migrated DB.
 - `/api/health` reports `database: "not_configured"` until a URL is present.
@@ -106,6 +110,30 @@ npm run db:seed
 - The seed uses fixed UUIDs and `ON CONFLICT DO NOTHING`, so it is safe to run repeatedly.
 - `leave_requests` and `audit_log` reject hard deletes at the trigger level. Requests are
   soft-deleted with `is_deleted`; audit rows are append-only.
+
+## Authentication (E2-02)
+
+Sign-in uses Supabase Auth through `@supabase/ssr`. The mock `mock-role`, `mock-user`, and
+`mock-email` cookies are gone.
+
+- `proxy.ts` verifies the provider session with `auth.getClaims()` and copies refreshed cookies onto
+  the response. It is an authentication gate only; role checks stay in pages, route handlers, and
+  SQL.
+- `getSession()` verifies the provider user, requires a confirmed email, then maps that email to
+  exactly one `users` row with `findUserByEmail` (case-insensitive). The role and display name come
+  from the DB row, never from provider claims or a cookie.
+- An authenticated identity with no `users` row is signed out; the login form reports that the
+  account is not linked.
+- `npm run auth:seed` creates or updates confirmed auth users for every seeded employee using
+  `SEED_AUTH_PASSWORD`. It needs the service-role key and refuses to run with
+  `NODE_ENV=production` unless `SEED_AUTH_ALLOW_PRODUCTION=1`.
+- Required env: `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` (public),
+  `SUPABASE_SERVICE_ROLE_KEY` (server/script only), and `SEED_AUTH_PASSWORD` (local development
+  only).
+- `GET /auth/callback` completes magic-link, OAuth, and email-confirmation redirects, then maps the
+  verified email before redirecting to `/dashboard` or `/forbidden`.
+- Missing auth configuration fails closed: protected pages redirect to `/login`, protected APIs
+  return `503 SERVICE_UNAVAILABLE`, and the login page explains the configuration gap.
 
 ## Submitting a request (TASK-011)
 
@@ -123,8 +151,8 @@ npm run db:seed
 - `201` — pending request created + `audit_log` submitted row. The response includes the request
   and a `warning` object.
 - `400` — malformed JSON, non-UUID leave type, reversed dates, or invalid reason.
-- `401` — no session cookie.
-- `403` — the session email has no matching `users` row.
+- `401` — no valid provider session.
+- `403` — the verified email has no matching `users` row.
 - `503` — database not configured or unavailable.
 
 The request is created for the **DB user matched by the session email**; a client-supplied
@@ -270,7 +298,8 @@ fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed fo
 
 ```
 app/
-  (auth)/login/          Mock login page + server action
+  (auth)/login/          Supabase sign-in page + server action
+  auth/callback/         Provider code exchange + identity mapping
   (app)/                 Authenticated shell and role-scoped pages
     dashboard/           Role-aware overview
     requests/            My requests, new request, request detail
@@ -289,7 +318,7 @@ components/
   layout/                App shell, sidebar, top bar, mobile nav
 lib/
   api/                   Error envelope + API handler wrapper
-  auth/                  Roles, session cookie read, route access
+  auth/                  Roles, Supabase clients, session + identity mapping
   db/                    Lazy pooled client, DB users, leave-request service
   domain/                Pure leave rules (balance warning)
   mock/                  Day 0 fixtures still used by the remaining pages
@@ -304,36 +333,39 @@ proxy.ts                 Next 16 route guard (not middleware.ts)
 
 ## Current boundaries
 
-- **Mock auth only.** The login server action sets `mock-role`, `mock-user`, and `mock-email`
-  cookies; no provider is called. `proxy.ts` guards every non-public route and API path. Server
-  components read the session with `getSession()`.
+- **Real auth.** Supabase Auth issues the session cookies; `proxy.ts` verifies them before every
+  non-public route. The mock `mock-*` cookies and role selector are removed. Server components read
+  the session with `getSession()`, which maps the verified email to the DB `users` row.
 - **Split data.** `GET`/`POST /api/leave-requests`, the decision route, `/requests/new`, `/balance`,
   `/audit`, and the manager `/approvals` queue use Postgres. The dashboard, request list/detail, and
   policy pages still read `lib/mock/data.ts`.
 - **Route handlers.** `/api/health`, `GET`/`POST /api/leave-requests`,
-  `POST /api/leave-requests/:id/decision`, `GET /api/audit/:userId`, and
-  `GET`/`POST /api/jobs/accrual`.
+  `POST /api/leave-requests/:id/decision`, `GET /api/audit/:userId`,
+  `GET`/`POST /api/jobs/accrual`, and `GET /auth/callback`.
 - **Manager queue scope.** `scope=team` is manager-only. It uses
   `WHERE employee.manager_id = :current_user_id`; employees and HR receive 403. The HR override
   view is not part of TASK-013.
-- **No external services.** No email, storage, payments, Supabase Auth, or OAuth.
+- **No provider SDK beyond auth.** No email, storage, payments, or OAuth client beyond what Supabase
+  Auth provides.
 
-The mock session must never ship past Day 0. Day 1 replaces how the cookie is issued; the guard,
-route scoping, and server-component session read stay the same. API authorization already uses the
-DB user row, not the cookie role.
+The provider proves identity only. Authorization still uses the DB user row and SQL relationship
+scoping, never a provider claim or a cookie role.
 
 ## Security notes
 
 - Manager scope is defined as a SQL predicate (`WHERE manager_id = :current_user_id`), never a
   client-side filter. See `knowledge/patterns/manager-scope.md`.
-- Session cookies are httpOnly, `SameSite=Lax`, 8 hours, and `Secure` in production.
+- Session cookies are issued by Supabase Auth through `@supabase/ssr`: httpOnly, `SameSite=Lax`,
+  and `Secure` in production. `proxy.ts` refreshes them and sets `no-store` on auth responses.
+- A verified provider email maps to exactly one `users` row via the `users_email_lower_unique`
+  index. Provider role claims are ignored.
 - Security headers (CSP, HSTS in production, frame denial, nosniff, referrer and permissions
   policies) are set in `next.config.ts`.
 - No CORS headers are sent: the app is same-origin only by design. Add a scoped allowlist only when
   a real cross-origin client exists.
 - API failures use exactly one envelope: `{ "success": false, "error": { "code", "message" } }`.
 - `POST /api/leave-requests` resolves the DB user by session email and rejects a client-supplied
-  `userId`; the cookie role never grants API identity.
+  `userId`; neither a cookie role nor a provider claim ever grants API identity.
 - Request creation and the submitted audit row run in one transaction. No balance is decremented
   until approval.
 - Server logs are Pino JSON with cookies, authorization headers, passwords, and tokens redacted.
