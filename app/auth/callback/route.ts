@@ -71,7 +71,10 @@ export async function GET(request: NextRequest) {
 
   if (!user) {
     await supabase.auth.signOut().catch(() => undefined);
-    return NextResponse.redirect(new URL("/forbidden", baseUrl));
+    // `/forbidden` requires a session, so a signed-out identity there would
+    // bounce to `/login` with no explanation. Surface the reason instead.
+    loginUrl.searchParams.set("error", "unlinked");
+    return NextResponse.redirect(loginUrl);
   }
 
   const destination = safeNextPath(request.nextUrl.searchParams.get("next")) ?? ROLE_HOME;

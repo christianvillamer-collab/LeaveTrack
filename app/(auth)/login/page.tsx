@@ -61,9 +61,11 @@ export default async function LoginPage({
       ? "We could not complete sign-in. Please try again."
       : error === "unconfirmed"
         ? "Confirm your email address before signing in. Check your inbox for the link."
-        : error === "unavailable"
-          ? "We could not complete sign-in. Try again in a moment."
-          : null;
+        : error === "unlinked"
+          ? "No employee record is linked to this account. Contact HR."
+          : error === "unavailable"
+            ? "We could not complete sign-in. Try again in a moment."
+            : null;
 
   return (
     <main id="main-content" className="grid min-h-dvh lg:grid-cols-[1.05fr_1fr]">

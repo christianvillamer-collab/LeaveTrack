@@ -88,10 +88,19 @@ export async function signIn(_previous: LoginState, formData: FormData): Promise
     return { error: UNCONFIRMED_ERROR };
   }
 
+  // Use the provider's canonical address, not the submitted string: the
+  // verified identity is what gets mapped to the employee row.
+  const verifiedEmail = signInData.user.email?.trim();
+
+  if (!verifiedEmail) {
+    await supabase.auth.signOut().catch(() => undefined);
+    return { error: CREDENTIALS_ERROR };
+  }
+
   let user: DbUser | null;
 
   try {
-    user = await findUserByEmail(email);
+    user = await findUserByEmail(verifiedEmail);
   } catch (error) {
     logger.error({ err: error }, "auth.identity_lookup_failed");
     await supabase.auth.signOut().catch(() => undefined);
