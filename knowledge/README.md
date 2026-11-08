@@ -21,6 +21,7 @@
 | `retros/task-016.md`              | TASK-016 mobile matrix, 375px form/balance results, hardening notes |
 | `retros/task-017.md`              | TASK-017 accrual ledger, idempotency proof, cron auth, backlog      |
 | `retros/task-018.md`              | TASK-018 per-type isolation proof, Unpaid bypass, test gotchas      |
+| `retros/e2-02.md`                 | E2-02 real-auth results, fail-closed branches, deferred subject id  |
 
 Source documents remain authoritative:
 
