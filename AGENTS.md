@@ -42,15 +42,23 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   the response. It redirects unauthenticated pages to `/login` and returns the JSON error envelope
   for API paths. It does **not** make authorization decisions: role and record checks live in pages,
   route handlers, and SQL.
-- `app/(app)/layout.tsx` requires a session. `app/(auth)/layout.tsx` must stay session-free — the
-  login page itself redirects an existing session to `/dashboard`.
+- `app/(app)/layout.tsx` requires a session **and exports `dynamic = "force-dynamic"`**. Keep it:
+  a build with an empty auth environment otherwise prerenders every protected route as a permanent
+  `307 → /login`, so runtime secrets would loop `login ↔ dashboard`. `app/(auth)/layout.tsx` must stay
+  session-free — the login page itself redirects an existing session to `/dashboard`.
 - Session plumbing: `lib/auth/supabase.ts` (server/proxy clients + `isAuthConfigured`),
   `lib/auth/session.ts` (`getSession`, `requireSession`, `requireRole`, `canAccessPath`) and
   `lib/auth/roles.ts` (role permissions). `getSession()` verifies the provider user, requires a
   confirmed email, then maps it to exactly one `users` row; the DB role and name are authoritative.
 - Login is a **Server Action** in `app/(auth)/login/actions.ts`; it is deliberately not an API
   route. Supabase Auth checks the credentials, and an authenticated email with no `users` row is
-  signed out. `GET /auth/callback` completes magic-link/OAuth/confirmation redirects.
+  signed out. `GET /auth/callback` completes magic-link/OAuth/confirmation redirects. Post-login
+  `next` values go through `lib/auth/safe-next-path.ts` (rejects `//`, absolute, `\`, control chars,
+  `/login`). Sign-out uses `signOut({ scope: "local" })` so cookies clear before the revoke request.
+- Public auth pages (`/login`, `/auth/callback`, `/forbidden`) are reachable without a session but
+  are still refreshed in `proxy.ts`; only `/api/health` and `/api/jobs/accrual` bypass the session
+  read entirely. A Server Component cannot persist a rotated refresh token, so skipping that refresh
+  can revoke the session via reuse detection.
 - Most data still lives in `lib/mock/data.ts` (fixtures + selectors). Types are in `lib/types.ts`.
   Replace selectors task by task; keep component prop shapes stable.
 - `lib/db/client.ts` is lazy. Importing it must never open a connection. Supabase's transaction

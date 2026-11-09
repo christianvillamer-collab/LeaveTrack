@@ -61,6 +61,29 @@ is still valid. That is intentional: the DB row is the access list.
 - `proxy.ts` defaults to the Node.js runtime in Next 16 and must not set the `runtime` config.
 - Route handlers that exchange a provider code (`/auth/callback`) are public and must map the
   verified email **before** redirecting into the app.
+- **Refresh public auth pages in the proxy.** `/login`, `/forbidden`, and `/auth/callback` are
+  reachable without a session, but they still call `getSession()`. Refresh them in the proxy and
+  return the refreshed-cookie response; only bypass the refresh for session-less system routes
+  (`/api/health`, `/api/jobs/accrual`). A Server Component cannot persist a rotated refresh token
+  (`cookieStore.set` throws and `setAll` swallows it), so refreshing there loses the rotation and
+  can trip refresh-token reuse detection.
+- **Sign out with `scope: "local"`.** The default `global` scope returns early on a retryable
+  fetch/5xx without clearing storage, so the cookie stays valid and `/login` bounces the user back.
+  `local` removes this device's session before the revoke request; log the failure and still
+  redirect.
+- **Guard `next` with `safeNextPath`.** Reject anything that is not a same-origin absolute path:
+  `//host`, absolute URLs, `\` (browsers normalize `/\evil` to `//evil`), control characters, and
+  `/login`. Login and `/auth/callback` share `lib/auth/safe-next-path.ts`.
+
+## Protected routes must render at request time
+
+`app/(app)/layout.tsx` exports `export const dynamic = "force-dynamic"`. Session reads used to opt
+these routes into dynamic rendering implicitly via `cookies()`. Once `getSession()` can return
+`null` **before** touching cookies (unconfigured auth), an empty-env `npm run build` prerenders
+every protected page as a permanent `307 → /login`. Injecting auth env at runtime then serves that
+baked redirect from cache, and `/login` redirects the now-valid session back to `/dashboard`:
+`ERR_TOO_MANY_REDIRECTS`. The build is contractually allowed to run with an empty environment, so
+the dynamic boundary is explicit, not incidental.
 
 ## Identity mapping is email-based — known limit
 
@@ -76,12 +99,19 @@ becomes necessary only when an employee changes their email. If you add it, stor
 3. Provider error, missing user, missing email, or unconfirmed email → `null`.
 4. Verified email with no `users` row → `null`.
 5. `requireRole` redirects a DB role that is not allowed to `/forbidden`.
-6. Proxy: public paths bypass auth; unauthenticated API → `401`; unauthenticated page → `/login`
-   with `next`; missing auth config → `503` (API) / redirect (page); configured + valid claims
-   returns the refreshed response.
-7. Integration: `findUserByEmail` resolves mixed-case email to one row and relies on
-   `users_email_lower_unique`.
+6. Proxy: system routes bypass the session read; unauthenticated API → `401`; unauthenticated page
+   → `/login` with `next`; missing auth config → `503` (API) / redirect (page); configured + valid
+   claims returns the refreshed response, **including rotated cookies and no-store headers**.
+7. Proxy: a public auth page (`/login`, `/forbidden`) still refreshes a session and stays reachable
+   without one.
+8. Sign-out requests `scope: "local"` and redirects even when the provider revoke errors.
+9. `safeNextPath` rejects protocol-relative, absolute, backslash, control-character, and `/login`
+   destinations.
+10. Integration: `findUserByEmail` resolves mixed-case email to one row and relies on
+    `users_email_lower_unique`.
 
-See `lib/auth/supabase.ts`, `lib/auth/session.ts`, `proxy.ts`, `app/auth/callback/route.ts`,
-`tests/auth-session.test.ts`, `tests/proxy-auth.test.ts`, and
+See `lib/auth/supabase.ts`, `lib/auth/session.ts`, `lib/auth/safe-next-path.ts`, `proxy.ts`,
+`app/(app)/layout.tsx`, `app/(app)/actions.ts`, `app/auth/callback/route.ts`,
+`tests/auth-session.test.ts`, `tests/proxy-auth.test.ts`, `tests/supabase-proxy-client.test.ts`,
+`tests/sign-out.test.ts`, `tests/safe-next-path.test.ts`, and
 `tests/auth-identity.integration.test.ts`.
