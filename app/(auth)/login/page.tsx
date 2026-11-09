@@ -3,9 +3,12 @@ import { redirect } from "next/navigation";
 import { CalendarCheck2, Clock3, ShieldCheck, Sparkles } from "lucide-react";
 
 import { Brand } from "@/components/layout/brand";
+import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { getSession } from "@/lib/auth/session";
 import { ROLE_HOME } from "@/lib/auth/roles";
+import { getSession, type Session } from "@/lib/auth/session";
+import { isAuthConfigured } from "@/lib/auth/supabase";
+import { logger } from "@/lib/logging/logger";
 
 import { LoginForm } from "./login-form";
 
@@ -35,14 +38,34 @@ const proofPoints = [
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; error?: string }>;
 }) {
-  const session = await getSession();
+  // A provider or DB hiccup must not blank the sign-in page: fall back to
+  // rendering the form, which surfaces its own error state.
+  let session: Session | null = null;
+
+  try {
+    session = await getSession();
+  } catch (error) {
+    logger.warn({ err: error }, "auth.login_session_lookup_failed");
+  }
+
   if (session) {
     redirect(ROLE_HOME);
   }
 
-  const { next } = await searchParams;
+  const configured = isAuthConfigured();
+  const { next, error } = await searchParams;
+  const loginError =
+    error === "auth"
+      ? "We could not complete sign-in. Please try again."
+      : error === "unconfirmed"
+        ? "Confirm your email address before signing in. Check your inbox for the link."
+        : error === "unlinked"
+          ? "No employee record is linked to this account. Contact HR."
+          : error === "unavailable"
+            ? "We could not complete sign-in. Try again in a moment."
+            : null;
 
   return (
     <main id="main-content" className="grid min-h-dvh lg:grid-cols-[1.05fr_1fr]">
@@ -58,7 +81,7 @@ export default async function LoginPage({
         <div className="relative max-w-md space-y-8">
           <Badge variant="primary" className="bg-sidebar-active text-sidebar-foreground">
             <Sparkles aria-hidden="true" className="size-3.5" />
-            Day 0 preview
+            Employee self-service
           </Badge>
           <div className="space-y-4">
             <h1 className="text-display text-sidebar-foreground">
@@ -103,15 +126,17 @@ export default async function LoginPage({
 
           <div className="space-y-2">
             <Badge variant="primary" className="lg:hidden">
-              Day 0 preview
+              LeaveTrack
             </Badge>
             <h1 className="text-h1 text-foreground">Welcome back</h1>
             <p className="text-small text-muted-foreground">
-              Sign in with any email and password to explore a role.
+              Sign in with your work email and password.
             </p>
           </div>
 
-          <LoginForm next={next} />
+          {loginError ? <Alert variant="danger">{loginError}</Alert> : null}
+
+          <LoginForm next={next} configured={configured} />
         </div>
       </section>
     </main>

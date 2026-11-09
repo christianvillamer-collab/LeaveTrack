@@ -7,6 +7,7 @@
 | `design-system.md`                | Day 0 design tokens, components, states, layout, accessibility      |
 | `patterns/implement-and-test.md`  | E→P→A→V chain used for every task                                   |
 | `patterns/manager-scope.md`       | Security-critical SQL scoping pattern + required tests              |
+| `patterns/auth-session.md`        | Verified identity → DB role mapping, fail-closed rules + tests      |
 | `patterns/accrual-idempotency.md` | Ledger-based monthly accrual, atomic credit, required tests         |
 | `patterns/api-endpoint.md`        | Template for Day 1 route handlers                                   |
 | `prompts/dev/implement-task.md`   | Prompt for a CSV task                                               |
@@ -20,6 +21,7 @@
 | `retros/task-016.md`              | TASK-016 mobile matrix, 375px form/balance results, hardening notes |
 | `retros/task-017.md`              | TASK-017 accrual ledger, idempotency proof, cron auth, backlog      |
 | `retros/task-018.md`              | TASK-018 per-type isolation proof, Unpaid bypass, test gotchas      |
+| `retros/e2-02.md`                 | E2-02 real-auth results, fail-closed branches, deferred subject id  |
 
 Source documents remain authoritative:
 

@@ -6,7 +6,7 @@ Traces to: `docs/prd/PRD-LeaveTrack-v1.0.md`
 
 - **Frontend/Backend:** Next.js 16 (App Router), TypeScript.
 - **Database:** Postgres via Supabase.
-- **Auth (Day 0):** mock cookie session — see `ADR-LeaveTrack-E001`. Real provider wired in Day 1.
+- **Auth (Day 0):** mock cookie session — see `ADR-LeaveTrack-E001`. Day 1 provider is TBD — see `ADR-LeaveTrack-E003`.
 - **Deployment target:** Vercel (app), Supabase (managed Postgres).
 
 Rationale: the team already runs Next.js + Supabase on other projects (fits nexus's Day 0 mock-auth-mock-data pattern directly); no NFR here demands anything heavier.
@@ -49,13 +49,77 @@ Error format: `{ success: false, error: { code, message } }` on every non-2xx re
 ## Security
 
 - Every manager-scoped endpoint enforces the `manager_id` filter in the query itself, not in application logic that could be bypassed — this is the direct implementation of PRD NFR "enforced server-side, never client-side only."
-- Session cookie is httpOnly, 8h expiry (Day 0 mock auth pattern; unchanged shape when real auth replaces it in Day 1).
+- Session cookies are issued by Supabase Auth through `@supabase/ssr`: httpOnly, `SameSite=Lax`, `Secure` in production. `proxy.ts` refreshes them on every matched request.
+- Authorization is **RBAC + relationship-based scoping** (`ADR-LeaveTrack-E004`): roles gate actions, `users.manager_id` gates records, and scope is always a SQL predicate.
 
 ## Deployment Topology
 
 - Single Next.js app on Vercel, single Supabase Postgres instance (pooled connection, not direct).
 - Monthly accrual job (US-07) runs as a scheduled Vercel Cron hitting `/api/jobs/accrual`.
 
+## Epic 2 — Production Readiness & Flow Completion
+
+Traces to: `docs/prd/PRD-LeaveTrack-v1.0.md` (US-01 AC1/AC3, US-03, US-05), `docs/brd/BRD-LeaveTrack-v1.0.md` (BR-02, BR-04), `ADR-LeaveTrack-E001` (Consequences), and the resolved Open Questions below.
+
+### Goal
+
+Epic 1 delivered the core submit → balance → scoped queue → decision → audit → accrual flow. Epic 2 closes the Day 0/Day 1 scaffold gaps so the app is production-ready before the Q3 audit: replace mock auth and the remaining mock-backed screens, complete the notification/override/compliance acceptance criteria, and harden authorization, scale, and tests.
+
+### Workstreams
+
+1. **Identity and authorization** — real provider (`ADR-E003`), DB-backed identity, centralized RBAC + relationship scoping (`ADR-E004`), DB-level enforcement decision.
+2. **Complete the DB-backed surface** — `/requests`, `/requests/[id]`, dashboard, HR override view, policy and people admin.
+3. **Close PRD acceptance gaps** — submission/decision notifications, HR over-balance override, audit date-range and export.
+4. **Scale and hardening** — pagination and indexes, 800-user load test, route-level authorization tests, fixture reset, accrual-ledger append-only guard, DB-down states, nonce-based CSP.
+
+### Auth (accepted — E2-02)
+
+Supabase Auth is the accepted provider (`ADR-LeaveTrack-E003`) and is implemented with `@supabase/ssr`. Sign-in, sign-out, `/auth/callback`, session refresh in `proxy.ts`, and the verified-email-to-`users` mapping are live. The former `mock-role` / `mock-user` / `mock-email` cookies are removed.
+
+- `proxy.ts` is an authentication gate only. It verifies the provider session with `auth.getClaims()` and copies refreshed cookies onto the response; it makes no authorization decisions.
+- `getSession()` requires a confirmed provider email, maps it case-insensitively to exactly one `users` row, and returns that row's role and name.
+- An authenticated identity with no `users` row is signed out. Provider claims are never an authorization source.
+- Missing auth configuration fails closed: protected pages redirect to `/login`, protected APIs return `503 SERVICE_UNAVAILABLE`.
+- Identity mapping uses the existing `users_email_lower_unique` index. A stable `auth_subject` column is deferred until email changes must be supported.
+
+### Authorization model
+
+The app uses **RBAC + relationship-based scoping**, not RBAC alone. See `ADR-LeaveTrack-E004`.
+
+- Roles (`employee`, `manager`, `hr_admin`) gate the _kind_ of action.
+- `users.manager_id` gates _which records_ a manager may act on.
+- Resource scope is always a SQL predicate (`WHERE employee.manager_id = :current_user_id`), never a client-side filter.
+- The DB `users.role` is the source of truth; neither a provider claim nor a cookie role is trusted for authorization.
+- `lib/auth/access.ts` is Day 0 presentation guarding (it reads mock fixtures) and is replaced, not extended, by E2-03/E2-05.
+- HR override is a separate audited action, not a blanket "HR can do anything."
+
+| Action                  | Employee  | Manager                   | HR Admin                        |
+| ----------------------- | --------- | ------------------------- | ------------------------------- |
+| Submit/view own request | Yes — own | Yes — own                 | Yes — own                       |
+| View team requests      | No        | Yes — direct reports only | Yes — all (override)            |
+| Decide pending request  | No        | Yes — direct reports only | Yes — override, reason required |
+| Run audit report        | No        | No                        | Yes                             |
+| Configure policies      | No        | No                        | Yes                             |
+| Run accrual job         | No        | No                        | No — system bearer only         |
+
+### ADRs
+
+- `ADR-LeaveTrack-E002` — accrual idempotency (referenced by this document; added in Epic 2).
+- `ADR-LeaveTrack-E003` — auth provider (accepted: Supabase Auth; implemented by E2-02).
+- `ADR-LeaveTrack-E004` — authorization model (RBAC + relationship scoping).
+
+### Sequencing
+
+1. **2.1 — Trust the identity:** E2-01 → E2-02 → E2-03 → E2-04; E2-20/E2-21 docs reconciliation.
+2. **2.2 — Finish the flow:** E2-05 → E2-06 → E2-10 → E2-07 → E2-11.
+3. **2.3 — Admin and compliance:** E2-08 → E2-09 → E2-12.
+4. **2.4 — Scale and hardening:** E2-13 → E2-14 → E2-15 → E2-16 → E2-17 → E2-18 → E2-19.
+
+### Out of scope
+
+Payroll integration, multi-country holiday calendars, biometric attendance, native mobile apps, Slack/Teams, employee self-service policy changes, multi-tenancy, and BI dashboards. Employee request cancellation is a future product decision (not in PRD v1.0).
+
 ## Open Questions
 
-- Should `leave_policies` support mid-year policy changes (e.g., a promotion changing accrual rate)? Flagged for Sprint 2 — not required for Q3 launch (BRD scope).
+- ~~Should `leave_policies` support mid-year policy changes (e.g., a promotion changing accrual rate)?~~ **Resolved in Epic 2 (E2-08):** effective-dated policy rates; the accrual job uses the rate effective for the run period.
+- Which provider replaces the mock cookie? **Open — `ADR-LeaveTrack-E003` (E2-01).**

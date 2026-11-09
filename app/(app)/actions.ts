@@ -1,14 +1,22 @@
 "use server";
 
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { SESSION_COOKIE, SESSION_EMAIL_COOKIE, SESSION_NAME_COOKIE } from "@/lib/auth/session";
+import { createSupabaseServerClient, isAuthConfigured } from "@/lib/auth/supabase";
+import { logger } from "@/lib/logging/logger";
 
 export async function signOut() {
-  const store = await cookies();
-  store.delete(SESSION_COOKIE);
-  store.delete(SESSION_NAME_COOKIE);
-  store.delete(SESSION_EMAIL_COOKIE);
+  if (isAuthConfigured()) {
+    const supabase = await createSupabaseServerClient();
+    // `local` removes this device's cookies before the revoke request, so a
+    // network or 5xx failure cannot leave a usable session behind. The default
+    // `global` scope returns early on such errors without clearing storage.
+    const { error } = await supabase.auth.signOut({ scope: "local" });
+
+    if (error) {
+      logger.warn({ err: error }, "auth.sign_out_failed");
+    }
+  }
+
   redirect("/login");
 }

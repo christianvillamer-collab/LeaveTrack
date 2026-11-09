@@ -17,10 +17,13 @@ LOG_LEVEL="info"
 DATABASE_URL="postgres://leavetrack:leavetrack@localhost:55432/leavetrack"
 DIRECT_URL="postgres://leavetrack:leavetrack@localhost:55432/leavetrack"
 
-# Day 1 providers — not used by the current code.
+# Supabase Auth (E2-02). Fill the URL and anon key to enable sign-in.
+# SUPABASE_SERVICE_ROLE_KEY is used only by \`npm run auth:seed\`, and
+# SEED_AUTH_PASSWORD is the local password that script applies.
 NEXT_PUBLIC_SUPABASE_URL=""
 NEXT_PUBLIC_SUPABASE_ANON_KEY=""
 SUPABASE_SERVICE_ROLE_KEY=""
+SEED_AUTH_PASSWORD=""
 
 # Monthly accrual job (TASK-017). GET/POST /api/jobs/accrual requires
 # Authorization: Bearer $CRON_SECRET; leave empty to disable the job locally.
@@ -29,5 +32,5 @@ CRON_SECRET=""
 
 writeFileSync(target, content, { mode: 0o600 });
 process.stdout.write(
-  "Created .env.local with local Postgres defaults. Next: npm run db:up && npm run db:migrate && npm run db:seed\n",
+  "Created .env.local with local Postgres defaults. Next: npm run db:up && npm run db:migrate && npm run db:seed\nFill the Supabase Auth values, then run npm run auth:seed before signing in.\n",
 );

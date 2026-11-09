@@ -1,18 +1,9 @@
-import { cookies } from "next/headers";
+import { cache } from "react";
 import { redirect } from "next/navigation";
 
-import {
-  canConfigurePolicies,
-  canManageRequests,
-  canRunAudit,
-  isRole,
-  type Role,
-} from "@/lib/auth/roles";
-
-export const SESSION_COOKIE = "mock-role";
-export const SESSION_NAME_COOKIE = "mock-user";
-export const SESSION_EMAIL_COOKIE = "mock-email";
-export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8;
+import { canConfigurePolicies, canManageRequests, canRunAudit, type Role } from "@/lib/auth/roles";
+import { createSupabaseServerClient, isAuthConfigured } from "@/lib/auth/supabase";
+import { findUserByEmail } from "@/lib/db/users";
 
 export interface Session {
   role: Role;
@@ -20,32 +11,44 @@ export interface Session {
   email: string;
 }
 
-const FALLBACK_NAMES: Record<Role, string> = {
-  employee: "Maya Chen",
-  manager: "Daniel Okafor",
-  hr_admin: "Priya Nair",
-};
-
-const FALLBACK_EMAILS: Record<Role, string> = {
-  employee: "maya.chen@leavetrack.demo",
-  manager: "daniel.okafor@leavetrack.demo",
-  hr_admin: "priya.nair@leavetrack.demo",
-};
-
-export async function getSession(): Promise<Session | null> {
-  const store = await cookies();
-  const role = store.get(SESSION_COOKIE)?.value;
-
-  if (!isRole(role)) {
+/**
+ * Verifies the provider session, then maps the verified email to exactly one
+ * `users` row. The provider proves *who* the user is; the DB row supplies the
+ * role (ADR-E004). Unconfirmed or unlinked identities are treated as
+ * unauthenticated.
+ */
+async function loadSession(): Promise<Session | null> {
+  if (!isAuthConfigured()) {
     return null;
   }
 
-  return {
-    role,
-    name: store.get(SESSION_NAME_COOKIE)?.value || FALLBACK_NAMES[role],
-    email: store.get(SESSION_EMAIL_COOKIE)?.value || FALLBACK_EMAILS[role],
-  };
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.auth.getUser();
+
+  if (error || !data.user) {
+    return null;
+  }
+
+  const email = data.user.email?.trim();
+
+  if (!email || !data.user.email_confirmed_at) {
+    return null;
+  }
+
+  const user = await findUserByEmail(email);
+
+  if (!user) {
+    return null;
+  }
+
+  return { role: user.role, name: user.name, email: user.email };
 }
+
+/**
+ * Cached per request so the `(app)` layout and the page it renders resolve the
+ * session once, not once per component.
+ */
+export const getSession = cache(loadSession);
 
 export async function requireSession(): Promise<Session> {
   const session = await getSession();
