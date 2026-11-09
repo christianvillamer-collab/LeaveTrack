@@ -151,4 +151,25 @@ describe("proxy authentication gate", () => {
     expect(pageResponse.status).toBe(307);
     expect(new URL(pageResponse.headers.get("location") ?? "").pathname).toBe("/login");
   });
+
+  it("refreshes the session on a public auth page instead of skipping it", async () => {
+    state.claimsSub = "00000000-0000-0000-0000-000000000001";
+    const refreshed = NextResponse.next();
+    state.proxyResponse = refreshed;
+
+    await expect(proxy(request("/login"))).resolves.toBe(refreshed);
+  });
+
+  it("keeps a public auth page reachable without a session", async () => {
+    const response = await proxy(request("/forbidden"));
+
+    expect(response.status).toBe(200);
+  });
+
+  it("lets a system route bypass auth even when the client would throw", async () => {
+    state.clientThrows = true;
+
+    await expect(proxy(request("/api/health"))).resolves.toMatchObject({ status: 200 });
+    await expect(proxy(request("/api/jobs/accrual"))).resolves.toMatchObject({ status: 200 });
+  });
 });

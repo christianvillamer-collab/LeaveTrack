@@ -4,21 +4,20 @@ import { ERROR_CODES, errorEnvelope } from "@/lib/api/errors";
 import { createSupabaseProxyClient, isAuthConfigured } from "@/lib/auth/supabase";
 
 // `/api/jobs/accrual` is the system cron route: it has no user session and
-// authenticates itself with CRON_SECRET. `/auth/callback` must be reachable
-// before a session exists so it can exchange the provider code.
-const PUBLIC_PATHS = new Set([
-  "/login",
-  "/auth/callback",
-  "/api/health",
-  "/api/jobs/accrual",
-  "/forbidden",
-]);
+// authenticates itself with CRON_SECRET, so it must never pay for a refresh.
+// The `PUBLIC_AUTH_PATHS` routes can still carry a session, so the proxy
+// refreshes them: their pages read the session in a Server Component, where a
+// cookie write is swallowed, and a lost refresh-token rotation can revoke it.
+const PUBLIC_AUTH_PATHS = new Set(["/login", "/auth/callback", "/forbidden"]);
+const PUBLIC_SYSTEM_PATHS = new Set(["/api/health", "/api/jobs/accrual"]);
 const ASSET_PATTERN = /\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|xml|woff2?)$/i;
 
-function isPublic(pathname: string): boolean {
-  return (
-    PUBLIC_PATHS.has(pathname) || pathname.startsWith("/_next/") || ASSET_PATTERN.test(pathname)
-  );
+function isAsset(pathname: string): boolean {
+  return pathname.startsWith("/_next/") || ASSET_PATTERN.test(pathname);
+}
+
+function isPublicAuth(pathname: string): boolean {
+  return PUBLIC_AUTH_PATHS.has(pathname);
 }
 
 function noStore(headers?: HeadersInit): Headers {
@@ -51,11 +50,16 @@ type ClaimsResult = {
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (isPublic(pathname)) {
+  // Assets and system routes never read a user session.
+  if (isAsset(pathname) || PUBLIC_SYSTEM_PATHS.has(pathname)) {
     return NextResponse.next();
   }
 
   if (!isAuthConfigured()) {
+    if (isPublicAuth(pathname)) {
+      return NextResponse.next();
+    }
+
     if (pathname.startsWith("/api/")) {
       return apiError(ERROR_CODES.SERVICE_UNAVAILABLE, "Authentication is not configured.", 503);
     }
@@ -77,17 +81,23 @@ export async function proxy(request: NextRequest) {
 
   // `getClaims()` verifies asymmetric JWTs locally and falls back to the auth
   // server for symmetric projects, so a missing `sub` means no valid session.
-  if (!client || !claims?.data?.claims.sub || claims.error) {
-    if (pathname.startsWith("/api/")) {
-      return apiError(ERROR_CODES.UNAUTHENTICATED, "Authentication is required.", 401);
-    }
-
-    const loginUrl = new URL("/login", request.url);
-    loginUrl.searchParams.set("next", pathname + request.nextUrl.search);
-    return NextResponse.redirect(loginUrl);
+  if (client && claims?.data?.claims.sub && !claims.error) {
+    return client.response();
   }
 
-  return client.response();
+  // Public auth pages still need the refreshed-cookie response when a session
+  // exists, but they must remain reachable without one.
+  if (isPublicAuth(pathname)) {
+    return client?.response() ?? NextResponse.next();
+  }
+
+  if (pathname.startsWith("/api/")) {
+    return apiError(ERROR_CODES.UNAUTHENTICATED, "Authentication is required.", 401);
+  }
+
+  const loginUrl = new URL("/login", request.url);
+  loginUrl.searchParams.set("next", pathname + request.nextUrl.search);
+  return NextResponse.redirect(loginUrl);
 }
 
 export const config = {
