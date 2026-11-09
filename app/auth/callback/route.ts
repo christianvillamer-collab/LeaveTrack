@@ -1,19 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { ROLE_HOME } from "@/lib/auth/roles";
+import { safeNextPath } from "@/lib/auth/safe-next-path";
 import { createSupabaseServerClient, isAuthConfigured } from "@/lib/auth/supabase";
 import { findUserByEmail } from "@/lib/db/users";
 import { logger } from "@/lib/logging/logger";
 
 export const runtime = "nodejs";
-
-function safeNextPath(next: string | null): string | null {
-  if (!next || !next.startsWith("/") || next.startsWith("//") || next === "/login") {
-    return null;
-  }
-
-  return next;
-}
 
 function baseUrlFor(request: NextRequest): string {
   return process.env.NEXT_PUBLIC_APP_URL?.trim() || request.nextUrl.origin;

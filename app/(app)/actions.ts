@@ -8,11 +8,12 @@ import { logger } from "@/lib/logging/logger";
 export async function signOut() {
   if (isAuthConfigured()) {
     const supabase = await createSupabaseServerClient();
-    const { error } = await supabase.auth.signOut();
+    // `local` removes this device's cookies before the revoke request, so a
+    // network or 5xx failure cannot leave a usable session behind. The default
+    // `global` scope returns early on such errors without clearing storage.
+    const { error } = await supabase.auth.signOut({ scope: "local" });
 
     if (error) {
-      // Still send the user to /login: the client clears local session cookies
-      // even when the revoke call fails, and a stuck session is worse.
       logger.warn({ err: error }, "auth.sign_out_failed");
     }
   }

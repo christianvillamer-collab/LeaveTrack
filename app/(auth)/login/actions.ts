@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { ROLE_HOME } from "@/lib/auth/roles";
+import { safeNextPath } from "@/lib/auth/safe-next-path";
 import {
   AuthConfigurationError,
   createSupabaseServerClient,
@@ -28,14 +29,6 @@ const UNCONFIRMED_ERROR =
   "Confirm your email address before signing in. Check your inbox for the link.";
 const UNLINKED_ERROR = "No employee record is linked to this account. Contact HR.";
 const UNAVAILABLE_ERROR = "We could not complete sign-in. Try again in a moment.";
-
-function safeNextPath(next: string | undefined): string | null {
-  if (!next || !next.startsWith("/") || next.startsWith("//") || next === "/login") {
-    return null;
-  }
-
-  return next;
-}
 
 /**
  * Real sign-in. Supabase Auth checks the credentials; the verified email is then
