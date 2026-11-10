@@ -37,13 +37,14 @@ Traces to `docs/arch-docs/ARCH-LeaveTrack-v1.0.md`, `ADR-LeaveTrack-E001`, and `
 
 ## Auth and authorization
 
-- Day 0 auth is a mock cookie session. Never describe it as production auth.
-- Route access is enforced in three places: `proxy.ts` for coarse redirects, `requireRole` in the
-  page/layout for the real gate, and `lib/auth/access.ts` for per-record checks.
+- Supabase Auth proves identity; the DB `users` row supplies the id, role, manager, and name.
+  Provider claims and browser cookies are never an identity or role source.
+- Route access is enforced in layers: `proxy.ts` for coarse redirects/authentication,
+  `requireSession`/`requirePolicy` in the page/layout, and `lib/auth/policy.ts` for per-record
+  checks. `lib/auth/policy.ts` is the single authorization matrix.
 - Manager scope must appear in SQL (`WHERE manager_id = :current_user_id`). Client-side filtering
   is a data-exposure bug, not a UX detail.
 - HR override views must be explicit and auditable.
-- API identity comes from the DB user matched by session email; the mock cookie role is UI-only.
 - Cookies: httpOnly, `SameSite=Lax`, `Secure` in production, 8-hour expiry.
 
 ## Database
