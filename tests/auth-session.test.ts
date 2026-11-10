@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
     email_confirmed_at?: string | null;
     user_metadata?: Record<string, unknown>;
     app_metadata?: Record<string, unknown>;
+    cookies?: Array<{ name: string; value: string }>;
   },
   providerError: null as null | { name: string; message: string },
   dbUser: null as null | {
@@ -23,6 +24,12 @@ const state = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => {
     throw new Error(`redirect:${url}`);
+  },
+}));
+
+vi.mock("next/headers", () => ({
+  cookies: () => {
+    throw new Error("session identity must never read cookies");
   },
 }));
 
@@ -69,26 +76,30 @@ beforeEach(() => {
 });
 
 describe("getSession", () => {
-  it("returns the role and name from the linked employee row", async () => {
+  it("returns the id, role, and manager from the linked employee row", async () => {
     await expect(getSession()).resolves.toEqual({
+      id: "user-1",
       role: "employee",
       name: "Maya Chen",
       email: "maya.chen@leavetrack.demo",
+      managerId: "manager-1",
     });
     expect(state.lookedUpEmail).toBe("maya.chen@leavetrack.demo");
   });
 
-  it("ignores provider role claims", async () => {
+  it("ignores provider role claims and never reads a forged role cookie", async () => {
     state.providerUser = {
       email: "maya.chen@leavetrack.demo",
       email_confirmed_at: "2026-01-01T00:00:00.000Z",
       app_metadata: { role: "hr_admin" },
       user_metadata: { role: "hr_admin" },
+      // A forged UI-hint cookie; getSession must not consult it.
+      cookies: [{ name: "mock-role", value: "hr_admin" }],
     };
 
     const session = await getSession();
 
-    expect(session?.role).toBe("employee");
+    expect(session).toMatchObject({ id: "user-1", role: "employee" });
   });
 
   it("treats a missing auth configuration as unauthenticated", async () => {
