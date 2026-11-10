@@ -96,9 +96,13 @@ describe("canDecideRequest", () => {
     expect(canDecideRequest(manager, { ...directReportRequest, status: "rejected" })).toBe(false);
   });
 
-  it("preserves the current HR decision surface for pending requests only", () => {
-    expect(canDecideRequest(hr, otherTeamRequest)).toBe(true);
-    expect(canDecideRequest(hr, { ...otherTeamRequest, status: "approved" })).toBe(false);
+  it("stops HR deciding here; an audited override is a separate task", () => {
+    expect(canDecideRequest(hr, otherTeamRequest)).toBe(false);
+    expect(canDecideRequest(hr, directReportRequest)).toBe(false);
+  });
+
+  it("stops a manager deciding an unmanaged pending record", () => {
+    expect(canDecideRequest(manager, unmanagedRequest)).toBe(false);
   });
 });
 
@@ -131,5 +135,15 @@ describe("action gates", () => {
     expect(canConfigurePolicies(hr)).toBe(true);
     expect(canConfigurePolicies(manager)).toBe(false);
     expect(canConfigurePolicies(employee)).toBe(false);
+  });
+
+  it("accepts a bare role string for role-only gates", () => {
+    expect(canViewTeam("manager")).toBe(true);
+    expect(canDecideTeamRequests("manager")).toBe(true);
+    expect(canManageRequests("hr_admin")).toBe(true);
+    expect(canRunAudit("hr_admin")).toBe(true);
+    expect(canConfigurePolicies("hr_admin")).toBe(true);
+    expect(canRunAudit("manager")).toBe(false);
+    expect(canManageRequests("employee")).toBe(false);
   });
 });

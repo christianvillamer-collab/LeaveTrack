@@ -26,14 +26,14 @@ Use **RBAC + relationship-based scoping**:
 
 ### Permission matrix
 
-| Action                  | Employee  | Manager                   | HR Admin                        |
-| ----------------------- | --------- | ------------------------- | ------------------------------- |
-| Submit/view own request | Yes — own | Yes — own                 | Yes — own                       |
-| View team requests      | No        | Yes — direct reports only | Yes — all (override)            |
-| Decide pending request  | No        | Yes — direct reports only | Yes — override, reason required |
-| Run audit report        | No        | No                        | Yes                             |
-| Configure policies      | No        | No                        | Yes                             |
-| Run accrual job         | No        | No                        | No — system bearer only         |
+| Action                  | Employee  | Manager                   | HR Admin                       |
+| ----------------------- | --------- | ------------------------- | ------------------------------ |
+| Submit/view own request | Yes — own | Yes — own                 | Yes — own                      |
+| View team requests      | No        | Yes — direct reports only | No — queue is manager-only     |
+| Decide pending request  | No        | Yes — direct reports only | No — separate audited override |
+| Run audit report        | No        | No                        | Yes                            |
+| Configure policies      | No        | No                        | Yes                            |
+| Run accrual job         | No        | No                        | No — system bearer only        |
 
 ## Consequences
 

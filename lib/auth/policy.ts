@@ -48,17 +48,13 @@ export function canViewRequest(actor: Actor, scope: RequestScope): boolean {
 }
 
 /**
- * Only a pending request can be decided. Managers may decide their direct
- * reports' requests; HR sees the decision surface but the audited override path
- * remains a separate task, as does the transactional `manager_id` SQL check.
+ * Only a pending request can be decided, and only by the owner's manager.
+ * HR has no blanket decision path here: an audited override is a separate task
+ * (ADR-E004), as is the transactional `manager_id` SQL check.
  */
 export function canDecideRequest(actor: Actor, scope: RequestScope): boolean {
   if (scope.status !== "pending") {
     return false;
-  }
-
-  if (actor.role === "hr_admin") {
-    return true;
   }
 
   return isDirectReport(actor, scope.ownerManagerId);
