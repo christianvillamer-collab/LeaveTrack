@@ -4,12 +4,13 @@
 
 Next.js 16 (App Router) + TypeScript + Tailwind v4 + Postgres/Supabase leave-management app.
 
-**Day 0 scaffold + TASK-011/012/013/014/015/016/017 + E2-02.** Sign-in uses Supabase Auth
-(`@supabase/ssr`); the mock `mock-*` cookies are gone. Most screens still read fixtures from
+**Day 0 scaffold + TASK-011/012/013/014/015/016/017 + E2-02/03/05.** Sign-in uses Supabase Auth
+(`@supabase/ssr`); the mock `mock-*` cookies are gone. The dashboard still reads fixtures from
 `lib/mock/data.ts`; `POST /api/leave-requests` + `/requests/new` write to Postgres, and
-`GET /api/leave-requests` + `/balance` + the manager `/approvals` queue read from it. Managers can
-approve/reject through `POST /api/leave-requests/:id/decision`, and HR reads per-employee reports
-through `GET /api/audit/:userId` + `/audit`. A monthly cron job accrues balances through
+`GET /api/leave-requests` + `/balance` + `/requests` + `/requests/[id]` + the manager
+`/approvals` queue read from it. Managers can approve/reject through
+`POST /api/leave-requests/:id/decision`, and HR reads per-employee reports through
+`GET /api/audit/:userId` + `/audit`. A monthly cron job accrues balances through
 `GET`/`POST /api/jobs/accrual`.
 Do not wire the remaining DB-backed pages without a task — that is future Day 1 work.
 
@@ -61,8 +62,9 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   are still refreshed in `proxy.ts`; only `/api/health` and `/api/jobs/accrual` bypass the session
   read entirely. A Server Component cannot persist a rotated refresh token, so skipping that refresh
   can revoke the session via reuse detection.
-- Most data still lives in `lib/mock/data.ts` (fixtures + selectors). Types are in `lib/types.ts`.
-  Replace selectors task by task; keep component prop shapes stable.
+- The dashboard still reads `lib/mock/data.ts` (fixtures + selectors); `/requests` and
+  `/requests/[id]` are DB-backed. Types are in `lib/types.ts`. Replace selectors task by task; keep
+  component prop shapes stable.
 - `lib/db/client.ts` is lazy. Importing it must never open a connection. Supabase's transaction
   pooler requires `prepare: false`; keep the pool at one connection for scripts.
 - `lib/db/*` owns SQL. `POST /api/leave-requests` resolves the DB user from the session email and

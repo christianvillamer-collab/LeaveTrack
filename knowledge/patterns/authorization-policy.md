@@ -55,6 +55,14 @@ canDecideRequest(actor, { ownerId, ownerManagerId, status });
 const session = await requirePolicy(canManageRequests); // redirects to /forbidden on false
 ```
 
+## Metadata
+
+`generateMetadata` runs outside the page render, so it does not inherit the page's policy gate. If a
+detail route puts record data in the tab title or description, authorize there too: fetch the record,
+run `canViewRequest` with the same actor/scope, and return a generic title for missing, unauthorized,
+or DB-unavailable records. Otherwise an out-of-scope user can read the employee name and leave type
+from the browser tab even though the page redirects.
+
 ## Required tests
 
 `tests/auth-policy.test.ts` covers the whole matrix: own / direct report / another manager's report /

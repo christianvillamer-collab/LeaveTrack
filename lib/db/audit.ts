@@ -201,3 +201,33 @@ export async function getAuditReport(userId: string): Promise<AuditReport | null
     events: eventRows.map(toAuditEvent),
   };
 }
+
+/**
+ * Chronological audit timeline for one active request. The request-detail page
+ * shows oldest-first, unlike the org/employee reports.
+ */
+export async function listAuditEventsForRequest(requestId: string): Promise<AuditEvent[]> {
+  const rows = await getDb()<AuditEventRow[]>`
+    select
+      a.id,
+      a.leave_request_id as request_id,
+      a.action,
+      coalesce(a.detail, '') as detail,
+      a.occurred_at,
+      e.id as employee_id,
+      e.name as employee_name,
+      e.email as employee_email,
+      ac.id as actor_id,
+      ac.name as actor_name,
+      ac.email as actor_email
+    from audit_log a
+    join leave_requests r on r.id = a.leave_request_id
+    join users e on e.id = r.user_id
+    join users ac on ac.id = a.actor_id
+    where a.leave_request_id = ${requestId}
+      and r.is_deleted = false
+    order by a.occurred_at asc
+  `;
+
+  return rows.map(toAuditEvent);
+}
