@@ -19,6 +19,9 @@ export const leaveRequestInputSchema = z
 
 export type LeaveRequestInput = z.infer<typeof leaveRequestInputSchema>;
 
+/** Path ids are UUIDs; anything else should 404 before it reaches Postgres. */
+export const leaveRequestIdSchema = z.uuid("The request id is invalid.");
+
 export const leaveRequestScopeSchema = z
   .enum(["mine", "team"], {
     message: 'scope must be "mine" or "team".',

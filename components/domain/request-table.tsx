@@ -13,11 +13,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { LeaveRequest } from "@/lib/types";
+import type { RequestSummary } from "@/lib/types";
 import { formatDateRange, formatDays } from "@/lib/utils/format";
 
 export interface RequestTableProps {
-  requests: LeaveRequest[];
+  requests: RequestSummary[];
   showEmployee?: boolean;
   emptyTitle?: string;
   emptyDescription?: string;
@@ -62,7 +62,7 @@ export function RequestTable({
                           {request.employee.name}
                         </p>
                         <p className="text-caption text-muted-foreground truncate">
-                          {request.employee.jobTitle}
+                          {request.employee.jobTitle ?? request.employee.email ?? ""}
                         </p>
                       </div>
                     </div>

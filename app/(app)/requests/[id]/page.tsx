@@ -3,26 +3,24 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, CalendarDays, Info, UserRound } from "lucide-react";
 
-import { ApprovalCard } from "@/components/domain/approval-card";
 import { AuditTrail } from "@/components/domain/audit-trail";
 import { LeaveTypeBadge } from "@/components/domain/leave-type-badge";
 import { StatusBadge } from "@/components/domain/status-badge";
+import { TeamDecisionActions } from "@/components/domain/team-decision-actions";
 import { Alert } from "@/components/ui/alert";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
+import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { canDecideRequest, canViewRequest } from "@/lib/auth/policy";
-import { requireSession } from "@/lib/auth/session";
-import {
-  auditForRequest,
-  balancesFor,
-  currentEmployee,
-  employeeFor,
-  requestById,
-} from "@/lib/mock/data";
+import { getSession, requireSession } from "@/lib/auth/session";
+import { listAuditEventsForRequest } from "@/lib/db/audit";
+import { getBalancesForUser, getLeaveRequestDetail } from "@/lib/db/leave";
+import type { LeaveRequestDetail, TeamLeaveRequest } from "@/lib/types";
 import { formatDate, formatDateRange, formatDateTime, formatDays } from "@/lib/utils/format";
+import { leaveRequestIdSchema } from "@/lib/validation/leave";
 
 export async function generateMetadata({
   params,
@@ -30,30 +28,106 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const request = requestById(id);
+  const parsed = leaveRequestIdSchema.safeParse(id);
 
-  if (!request) {
+  if (!parsed.success) {
     return { title: "Request not found" };
   }
 
-  return {
-    title: `${request.reference} · ${request.leaveType.name} leave`,
-    description: `${request.employee.name}'s ${request.leaveType.name.toLowerCase()} leave request.`,
-  };
+  const session = await getSession();
+
+  if (!session) {
+    return { title: "Request" };
+  }
+
+  try {
+    const request = await getLeaveRequestDetail(parsed.data);
+
+    if (!request) {
+      return { title: "Request not found" };
+    }
+
+    const actor = { id: session.id, role: session.role };
+    const scope = {
+      ownerId: request.employee.id,
+      ownerManagerId: request.employee.managerId,
+      status: request.status,
+    };
+
+    if (!canViewRequest(actor, scope)) {
+      return { title: "Request" };
+    }
+
+    return {
+      title: `${request.reference} · ${request.leaveType.name} leave`,
+      description: `${request.employee.name}'s ${request.leaveType.name.toLowerCase()} leave request.`,
+    };
+  } catch (error) {
+    if (error instanceof AppError && error.code === ERROR_CODES.DATABASE_NOT_CONFIGURED) {
+      return { title: "Request" };
+    }
+
+    throw error;
+  }
 }
 
 export default async function RequestDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const parsed = leaveRequestIdSchema.safeParse(id);
+
+  if (!parsed.success) {
+    notFound();
+  }
+
   const session = await requireSession();
-  const request = requestById(id);
+
+  let databaseUnavailable = false;
+  let request: LeaveRequestDetail | null = null;
+
+  try {
+    request = await getLeaveRequestDetail(parsed.data);
+  } catch (error) {
+    if (error instanceof AppError && error.code === ERROR_CODES.DATABASE_NOT_CONFIGURED) {
+      databaseUnavailable = true;
+    } else {
+      throw error;
+    }
+  }
+
+  if (databaseUnavailable) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          eyebrow="Request"
+          title="Request unavailable"
+          description="The request detail needs Postgres."
+          actions={
+            <Button asChild variant="secondary">
+              <Link href="/requests">
+                <ArrowLeft aria-hidden="true" />
+                Back
+              </Link>
+            </Button>
+          }
+        />
+        <Alert variant="warning" title="Database not configured">
+          <div className="space-y-2">
+            <p>
+              Request detail needs Postgres. Set <code className="font-mono">DATABASE_URL</code> in{" "}
+              <code className="font-mono">.env.local</code>, then run:
+            </p>
+            <p className="text-caption font-mono">npm run db:migrate && npm run db:seed</p>
+          </div>
+        </Alert>
+      </div>
+    );
+  }
 
   if (!request) {
     notFound();
   }
 
-  // Fixture requests use mock `u-*` ids, not the DB UUIDs in the session, so the
-  // policy actor comes from the fixture until E2-05 replaces this page's data.
-  const actor = { id: currentEmployee(session.role).id, role: session.role };
+  const actor = { id: session.id, role: session.role };
   const scope = {
     ownerId: request.employee.id,
     ownerManagerId: request.employee.managerId,
@@ -64,12 +138,28 @@ export default async function RequestDetailPage({ params }: { params: Promise<{ 
     redirect("/forbidden");
   }
 
-  const events = auditForRequest(request.id);
+  const [events, balances] = await Promise.all([
+    listAuditEventsForRequest(request.id),
+    getBalancesForUser(request.employee.id),
+  ]);
   const canDecide = canDecideRequest(actor, scope);
-  const manager = request.employee.managerId ? employeeFor(request.employee.managerId) : null;
-  const balance = balancesFor(request.employee.id).find(
-    (entry) => entry.leaveType.id === request.leaveType.id,
-  );
+  const managerName = request.employee.managerName;
+  const balance = balances.find((entry) => entry.leaveType.id === request.leaveType.id);
+  const decisionTarget: TeamLeaveRequest = {
+    id: request.id,
+    employee: {
+      id: request.employee.id,
+      name: request.employee.name,
+      email: request.employee.email,
+    },
+    leaveType: request.leaveType,
+    startDate: request.startDate,
+    endDate: request.endDate,
+    days: request.days,
+    reason: request.reason,
+    status: request.status,
+    createdAt: request.createdAt,
+  };
 
   return (
     <div className="space-y-6">
@@ -95,9 +185,6 @@ export default async function RequestDetailPage({ params }: { params: Promise<{ 
                 <Avatar name={request.employee.name} size="lg" />
                 <div>
                   <p className="text-h3 text-foreground">{request.employee.name}</p>
-                  <p className="text-small text-muted-foreground">
-                    {request.employee.jobTitle} · {request.employee.team}
-                  </p>
                   <p className="text-caption text-muted-foreground">{request.employee.email}</p>
                 </div>
               </div>
@@ -128,7 +215,7 @@ export default async function RequestDetailPage({ params }: { params: Promise<{ 
                   <dt className="text-caption text-muted-foreground">Manager</dt>
                   <dd className="text-small text-foreground mt-1 flex items-center gap-2 font-semibold">
                     <UserRound aria-hidden="true" className="text-muted-foreground size-4" />
-                    {manager?.name ?? "No manager assigned"}
+                    {managerName ?? "No manager assigned"}
                   </dd>
                 </div>
                 <div>
@@ -173,8 +260,8 @@ export default async function RequestDetailPage({ params }: { params: Promise<{ 
                 </div>
               ) : (
                 <Alert variant="info" title="Awaiting a decision">
-                  {manager
-                    ? `${manager.name} will see this in their scoped approvals queue.`
+                  {managerName
+                    ? `${managerName} will see this in their scoped approvals queue.`
                     : "This request needs an HR override decision."}
                 </Alert>
               )}
@@ -186,11 +273,11 @@ export default async function RequestDetailPage({ params }: { params: Promise<{ 
               <div>
                 <h2 className="text-h3 text-foreground">Record a decision</h2>
                 <p className="text-small text-muted-foreground">
-                  Day 0 previews the decision dialog; persistence, balance updates, and the audit
-                  row land in Day 1.
+                  Approving deducts the request&apos;s days from the employee&apos;s balance.
+                  Rejecting requires a reason. Both write an audit record.
                 </p>
               </div>
-              <ApprovalCard request={request} />
+              <TeamDecisionActions request={decisionTarget} />
             </section>
           ) : null}
         </div>
@@ -251,7 +338,9 @@ export default async function RequestDetailPage({ params }: { params: Promise<{ 
                   ? `${request.leaveType.name} accrues automatically each month.`
                   : "Unpaid leave is independent of accrual and always available by policy."}
               </p>
-              <Badge variant="neutral">{request.employee.team} team</Badge>
+              <Badge variant="neutral">
+                {request.leaveType.tracksBalance ? "Balance tracked" : "Balance not tracked"}
+              </Badge>
               <p className="text-caption flex items-start gap-2">
                 <Info aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
                 Request records are retained for at least three years and cannot be hard-deleted.

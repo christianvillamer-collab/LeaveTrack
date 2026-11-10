@@ -34,6 +34,53 @@ export interface LeaveRequest {
   createdAt: string;
 }
 
+/**
+ * The fields a request table renders. `LeaveRequest` is structurally assignable
+ * to this shape, so fixture-backed screens keep working while DB-backed lists
+ * omit presentation-only fields (`jobTitle`, `team`) that have no column.
+ */
+export interface RequestSummaryEmployee {
+  id: string;
+  name: string;
+  email?: string;
+  jobTitle?: string;
+}
+
+export interface RequestSummary {
+  id: string;
+  reference: string;
+  employee: RequestSummaryEmployee;
+  leaveType: LeaveType;
+  startDate: string;
+  endDate: string;
+  days: number;
+  status: RequestStatus;
+  createdAt: string;
+}
+
+/** Full DB-backed record for the request detail page. */
+export interface LeaveRequestDetail {
+  id: string;
+  reference: string;
+  employee: {
+    id: string;
+    name: string;
+    email: string;
+    managerId: string | null;
+    managerName: string | null;
+  };
+  leaveType: LeaveType;
+  startDate: string;
+  endDate: string;
+  days: number;
+  reason: string;
+  status: RequestStatus;
+  decidedBy: AuditEventPerson | null;
+  decidedAt: string | null;
+  decisionNote: string | null;
+  createdAt: string;
+}
+
 export interface LeaveBalance {
   leaveType: LeaveType;
   confirmed: number | null;

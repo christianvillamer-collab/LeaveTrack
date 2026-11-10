@@ -1,6 +1,7 @@
 import "server-only";
 
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import type { Role } from "@/lib/auth/roles";
 import { getDb } from "@/lib/db/client";
 import { evaluateBalanceWarning } from "@/lib/domain/leave";
 import { listDirectReports } from "@/lib/db/users";
@@ -8,14 +9,21 @@ import type {
   CreateLeaveRequestResult,
   LeaveBalance,
   LeaveDecisionResult,
+  LeaveRequestDetail,
   LeaveType,
   MyLeaveData,
   MyLeaveRequest,
   RequestStatus,
+  RequestSummary,
   TeamLeaveData,
   TeamLeaveRequest,
 } from "@/lib/types";
-import { countLeaveDays, formatDateRange, formatDays } from "@/lib/utils/format";
+import {
+  countLeaveDays,
+  formatDateRange,
+  formatDays,
+  formatRequestReference,
+} from "@/lib/utils/format";
 
 interface LeaveTypeRow {
   id: string;
@@ -57,6 +65,35 @@ interface TeamLeaveRequestRow extends MyLeaveRequestRow {
   employee_id: string;
   employee_name: string;
   employee_email: string;
+}
+
+interface ScopedRequestRow extends MyLeaveRequestRow {
+  employee_id: string;
+  employee_name: string;
+  employee_email: string;
+}
+
+interface RequestDetailRow {
+  id: string;
+  start_date: string;
+  end_date: string;
+  days: number;
+  status: string;
+  reason: string;
+  created_at: Date;
+  decided_at: Date | null;
+  decision_note: string | null;
+  employee_id: string;
+  employee_name: string;
+  employee_email: string;
+  manager_id: string | null;
+  manager_name: string | null;
+  decided_by_id: string | null;
+  decided_by_name: string | null;
+  decided_by_email: string | null;
+  leave_type_id: string;
+  leave_type_name: string;
+  tracks_balance: boolean;
 }
 
 interface DecisionRow {
@@ -225,6 +262,138 @@ export async function getMyLeaveData(userId: string): Promise<MyLeaveData> {
   ]);
 
   return { balances, requests };
+}
+
+export interface ScopedActor {
+  id: string;
+  role: Role;
+}
+
+/**
+ * The scoped `/requests` list. Role picks the branch, but every scope predicate
+ * stays in SQL: employees read their own rows, managers read their own plus
+ * direct reports (`e.manager_id = :current_user_id`), and HR reads all. Unknown
+ * roles match no branch, so the default is deny.
+ */
+export async function listScopedLeaveRequests(actor: ScopedActor): Promise<RequestSummary[]> {
+  const rows = await getDb()<ScopedRequestRow[]>`
+    select
+      r.id,
+      r.start_date::text as start_date,
+      r.end_date::text as end_date,
+      (r.end_date - r.start_date + 1)::int as days,
+      r.status::text as status,
+      r.created_at,
+      lt.id as leave_type_id,
+      lt.name as leave_type_name,
+      lt.tracks_balance,
+      e.id as employee_id,
+      e.name as employee_name,
+      e.email as employee_email
+    from leave_requests r
+    join users e on e.id = r.user_id
+    join leave_types lt on lt.id = r.leave_type_id
+    where r.is_deleted = false
+      and (
+        (${actor.role} = 'employee' and r.user_id = ${actor.id})
+        or (
+          ${actor.role} = 'manager'
+          and (r.user_id = ${actor.id} or e.manager_id = ${actor.id})
+        )
+        or (${actor.role} = 'hr_admin')
+      )
+    order by r.created_at desc
+  `;
+
+  return rows.map((row) => ({
+    id: row.id,
+    reference: formatRequestReference(row.id),
+    employee: {
+      id: row.employee_id,
+      name: row.employee_name,
+      email: row.employee_email,
+    },
+    leaveType: toLeaveType({
+      id: row.leave_type_id,
+      name: row.leave_type_name,
+      tracks_balance: row.tracks_balance,
+    }),
+    startDate: row.start_date,
+    endDate: row.end_date,
+    days: Number(row.days),
+    status: toRequestStatus(row.status),
+    createdAt: row.created_at.toISOString(),
+  }));
+}
+
+/** One active (not soft-deleted) request with its owner, manager, and decision. */
+export async function getLeaveRequestDetail(requestId: string): Promise<LeaveRequestDetail | null> {
+  const rows = await getDb()<RequestDetailRow[]>`
+    select
+      r.id,
+      r.start_date::text as start_date,
+      r.end_date::text as end_date,
+      (r.end_date - r.start_date + 1)::int as days,
+      r.status::text as status,
+      r.reason,
+      r.created_at,
+      r.decided_at,
+      r.decision_note,
+      e.id as employee_id,
+      e.name as employee_name,
+      e.email as employee_email,
+      e.manager_id,
+      m.name as manager_name,
+      d.id as decided_by_id,
+      d.name as decided_by_name,
+      d.email as decided_by_email,
+      lt.id as leave_type_id,
+      lt.name as leave_type_name,
+      lt.tracks_balance
+    from leave_requests r
+    join users e on e.id = r.user_id
+    left join users m on m.id = e.manager_id
+    left join users d on d.id = r.decided_by
+    join leave_types lt on lt.id = r.leave_type_id
+    where r.id = ${requestId}
+      and r.is_deleted = false
+    limit 1
+  `;
+
+  const row = rows[0];
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    reference: formatRequestReference(row.id),
+    employee: {
+      id: row.employee_id,
+      name: row.employee_name,
+      email: row.employee_email,
+      managerId: row.manager_id,
+      managerName: row.manager_name,
+    },
+    leaveType: toLeaveType({
+      id: row.leave_type_id,
+      name: row.leave_type_name,
+      tracks_balance: row.tracks_balance,
+    }),
+    startDate: row.start_date,
+    endDate: row.end_date,
+    days: Number(row.days),
+    reason: row.reason,
+    status: toRequestStatus(row.status),
+    decidedBy:
+      row.decided_by_id && row.decided_by_name
+        ? { id: row.decided_by_id, name: row.decided_by_name, email: row.decided_by_email ?? "" }
+        : null,
+    decidedAt: row.decided_at ? row.decided_at.toISOString() : null,
+    decisionNote: row.decision_note,
+    createdAt: row.created_at.toISOString(),
+  };
 }
 
 /**
