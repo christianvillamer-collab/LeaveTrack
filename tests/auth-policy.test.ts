@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   canConfigurePolicies,
   canDecideRequest,
+  canDecideTeamRequests,
   canManageRequests,
   canRunAudit,
   canViewRequest,
@@ -106,6 +107,12 @@ describe("action gates", () => {
     expect(canViewTeam(manager)).toBe(true);
     expect(canViewTeam(employee)).toBe(false);
     expect(canViewTeam(hr)).toBe(false);
+  });
+
+  it("limits the decision endpoint to managers", () => {
+    expect(canDecideTeamRequests(manager)).toBe(true);
+    expect(canDecideTeamRequests(employee)).toBe(false);
+    expect(canDecideTeamRequests(hr)).toBe(false);
   });
 
   it("allows managers and HR to manage requests", () => {

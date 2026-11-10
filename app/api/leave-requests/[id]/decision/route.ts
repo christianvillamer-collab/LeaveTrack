@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { AppError } from "@/lib/api/errors";
 import { withApiHandler } from "@/lib/api/handler";
+import { canDecideTeamRequests } from "@/lib/auth/policy";
 import { getSession } from "@/lib/auth/session";
 import { decideLeaveRequest } from "@/lib/db/leave";
 import type { LeaveDecisionResult } from "@/lib/types";
@@ -18,7 +19,7 @@ export const POST = withApiHandler<LeaveDecisionResult, { id: string }>(
       throw AppError.unauthenticated();
     }
 
-    if (session.role !== "manager") {
+    if (!canDecideTeamRequests({ id: session.id, role: session.role })) {
       throw AppError.forbidden("Manager access is required.");
     }
 

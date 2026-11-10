@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { canManageRequests } from "@/lib/auth/policy";
+import { canManageRequests, canRunAudit, canViewTeam } from "@/lib/auth/policy";
 import { requirePolicy } from "@/lib/auth/session";
 import { getTeamLeaveData } from "@/lib/db/leave";
 import type { TeamLeaveData } from "@/lib/types";
@@ -18,12 +18,14 @@ export const metadata = { title: "Approvals" };
 
 export default async function ApprovalsPage() {
   const session = await requirePolicy(canManageRequests);
+  const isManager = canViewTeam(session);
+  const isHr = canRunAudit(session);
 
   let databaseUnavailable = false;
   let data: TeamLeaveData = { requests: [], directReports: [] };
 
   try {
-    if (session.role === "manager") {
+    if (isManager) {
       data = await getTeamLeaveData(session.id);
     }
   } catch (error) {
@@ -33,9 +35,6 @@ export default async function ApprovalsPage() {
       throw error;
     }
   }
-
-  const isManager = session.role === "manager";
-  const isHr = session.role === "hr_admin";
   const pending = data.requests.filter((request) => request.status === "pending");
   const decided = data.requests.filter((request) => request.status !== "pending");
   const reports = data.directReports;

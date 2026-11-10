@@ -34,14 +34,15 @@ canDecideRequest(actor, { ownerId, ownerManagerId, status });
 
 ## Matrix
 
-| Check                  | Employee   | Manager                 | HR Admin          |
-| ---------------------- | ---------- | ----------------------- | ----------------- |
-| `canViewRequest`       | own record | own + direct reports    | all records       |
-| `canDecideRequest`     | never      | direct reports, pending | pending (surface) |
-| `canViewTeam`          | no         | yes                     | no                |
-| `canManageRequests`    | no         | yes                     | yes               |
-| `canRunAudit`          | no         | no                      | yes               |
-| `canConfigurePolicies` | no         | no                      | yes               |
+| Check                   | Employee   | Manager                 | HR Admin          |
+| ----------------------- | ---------- | ----------------------- | ----------------- |
+| `canViewRequest`        | own record | own + direct reports    | all records       |
+| `canDecideRequest`      | never      | direct reports, pending | pending (surface) |
+| `canViewTeam`           | no         | yes                     | no                |
+| `canDecideTeamRequests` | no         | yes                     | no                |
+| `canManageRequests`     | no         | yes                     | yes               |
+| `canRunAudit`           | no         | no                      | yes               |
+| `canConfigurePolicies`  | no         | no                      | yes               |
 
 - `canDecideRequest` rejects any non-pending request, even for a direct report.
 - HR's decision visibility is the existing surface only; an audited HR override is a separate task.

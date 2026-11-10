@@ -69,6 +69,14 @@ export function canViewTeam(subject: Subject): boolean {
   return roleOf(subject) === "manager";
 }
 
+/**
+ * Manager-only gate for the decision endpoint. The record-level check (the
+ * owner's `manager_id`) stays in the transactional SQL.
+ */
+export function canDecideTeamRequests(subject: Subject): boolean {
+  return roleOf(subject) === "manager";
+}
+
 export function canManageRequests(subject: Subject): boolean {
   const role = roleOf(subject);
   return role === "manager" || role === "hr_admin";
