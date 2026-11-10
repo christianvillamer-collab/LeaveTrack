@@ -12,14 +12,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { requireRole } from "@/lib/auth/session";
+import { canConfigurePolicies } from "@/lib/auth/policy";
+import { requirePolicy } from "@/lib/auth/session";
 import { accrualSummary, policies } from "@/lib/mock/data";
 import { formatDate, formatDays } from "@/lib/utils/format";
 
 export const metadata = { title: "Leave policies" };
 
 export default async function PoliciesPage() {
-  await requireRole(["hr_admin"]);
+  await requirePolicy(canConfigurePolicies);
 
   return (
     <div className="space-y-6">

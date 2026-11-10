@@ -10,31 +10,19 @@ import { PageHeader } from "@/components/ui/page-header";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { requireSession } from "@/lib/auth/session";
 import { getMyLeaveData } from "@/lib/db/leave";
-import { findUserByEmail } from "@/lib/db/users";
 import type { MyLeaveData } from "@/lib/types";
 import { formatDate, formatDays } from "@/lib/utils/format";
 
 export const metadata = { title: "My balance" };
 
-const DEMO_EMAILS = [
-  "maya.chen@leavetrack.demo",
-  "daniel.okafor@leavetrack.demo",
-  "priya.nair@leavetrack.demo",
-];
-
 export default async function BalancePage() {
   const session = await requireSession();
 
   let databaseUnavailable = false;
-  let user: Awaited<ReturnType<typeof findUserByEmail>> = null;
   let data: MyLeaveData = { balances: [], requests: [] };
 
   try {
-    user = await findUserByEmail(session.email);
-
-    if (user) {
-      data = await getMyLeaveData(user.id);
-    }
+    data = await getMyLeaveData(session.id);
   } catch (error) {
     if (error instanceof AppError && error.code === ERROR_CODES.DATABASE_NOT_CONFIGURED) {
       databaseUnavailable = true;
@@ -54,7 +42,7 @@ export default async function BalancePage() {
     null,
   );
   const totalConfirmed = balances.reduce((total, balance) => total + (balance.confirmed ?? 0), 0);
-  const ready = Boolean(user) && balances.length > 0;
+  const ready = balances.length > 0;
 
   return (
     <div className="space-y-6">
@@ -75,13 +63,7 @@ export default async function BalancePage() {
       {!ready ? (
         <Alert
           variant="warning"
-          title={
-            databaseUnavailable
-              ? "Database not configured"
-              : user
-                ? "No balances configured"
-                : "No employee record for this account"
-          }
+          title={databaseUnavailable ? "Database not configured" : "No balances configured"}
         >
           {databaseUnavailable ? (
             <div className="space-y-2">
@@ -91,25 +73,13 @@ export default async function BalancePage() {
               </p>
               <p className="text-caption font-mono">npm run db:migrate && npm run db:seed</p>
             </div>
-          ) : user ? (
+          ) : (
             <div className="space-y-2">
               <p>
                 No leave types or balances are configured for this account. Run the seed and check
                 the employee&apos;s leave policies.
               </p>
               <p className="text-caption font-mono">npm run db:seed</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <p>
-                The mock login accepts any email, but balances require a seeded DB account. Sign out
-                from the sidebar and sign in with one of these demo emails:
-              </p>
-              <ul className="text-caption list-inside list-disc font-mono">
-                {DEMO_EMAILS.map((email) => (
-                  <li key={email}>{email}</li>
-                ))}
-              </ul>
             </div>
           )}
         </Alert>

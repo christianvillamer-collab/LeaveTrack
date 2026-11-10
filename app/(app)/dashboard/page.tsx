@@ -33,7 +33,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { viewerFor } from "@/lib/auth/access";
 import { requireSession, type Session } from "@/lib/auth/session";
 import {
   accrualSummary,
@@ -41,6 +40,7 @@ import {
   allRequests,
   auditForEmployee,
   balancesFor,
+  currentEmployee,
   directReports,
   employees,
   pendingTeamRequests,
@@ -71,7 +71,7 @@ function vacationBalance(employeeId: string): string {
 
 export default async function DashboardPage() {
   const session = await requireSession();
-  const viewer = viewerFor(session);
+  const viewer = currentEmployee(session.role);
 
   return (
     <div className="space-y-6">

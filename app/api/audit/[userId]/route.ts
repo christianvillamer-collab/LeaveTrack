@@ -2,9 +2,9 @@ import { z } from "zod";
 
 import { AppError } from "@/lib/api/errors";
 import { withApiHandler } from "@/lib/api/handler";
+import { canRunAudit } from "@/lib/auth/policy";
 import { getSession } from "@/lib/auth/session";
 import { getAuditReport } from "@/lib/db/audit";
-import { findUserByEmail } from "@/lib/db/users";
 import type { AuditReport } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -18,13 +18,7 @@ export const GET = withApiHandler<AuditReport, { userId: string }>(
       throw AppError.unauthenticated();
     }
 
-    const viewer = await findUserByEmail(session.email);
-
-    if (!viewer) {
-      throw AppError.forbidden("No employee record is linked to this account.");
-    }
-
-    if (viewer.role !== "hr_admin") {
+    if (!canRunAudit({ id: session.id, role: session.role })) {
       throw AppError.forbidden("HR admin access is required.");
     }
 

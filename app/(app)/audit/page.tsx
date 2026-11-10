@@ -10,7 +10,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Select } from "@/components/ui/select";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { requireRole } from "@/lib/auth/session";
+import { canRunAudit } from "@/lib/auth/policy";
+import { requirePolicy } from "@/lib/auth/session";
 import { getAuditReport } from "@/lib/db/audit";
 import { listEmployees, type EmployeeDirectoryEntry } from "@/lib/db/users";
 import { accrualSummary } from "@/lib/mock/data";
@@ -24,7 +25,7 @@ export default async function AuditPage({
 }: {
   searchParams: Promise<{ employee?: string }>;
 }) {
-  await requireRole(["hr_admin"]);
+  await requirePolicy(canRunAudit);
 
   const { employee: requestedEmployee } = await searchParams;
 

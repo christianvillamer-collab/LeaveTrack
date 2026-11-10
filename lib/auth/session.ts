@@ -1,20 +1,22 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
 
-import { canConfigurePolicies, canManageRequests, canRunAudit, type Role } from "@/lib/auth/roles";
+import type { Role } from "@/lib/auth/roles";
 import { createSupabaseServerClient, isAuthConfigured } from "@/lib/auth/supabase";
 import { findUserByEmail } from "@/lib/db/users";
 
 export interface Session {
+  id: string;
   role: Role;
   name: string;
   email: string;
+  managerId: string | null;
 }
 
 /**
  * Verifies the provider session, then maps the verified email to exactly one
  * `users` row. The provider proves *who* the user is; the DB row supplies the
- * role (ADR-E004). Unconfirmed or unlinked identities are treated as
+ * id and role (ADR-E004). Unconfirmed or unlinked identities are treated as
  * unauthenticated.
  */
 async function loadSession(): Promise<Session | null> {
@@ -41,7 +43,13 @@ async function loadSession(): Promise<Session | null> {
     return null;
   }
 
-  return { role: user.role, name: user.name, email: user.email };
+  return {
+    id: user.id,
+    role: user.role,
+    name: user.name,
+    email: user.email,
+    managerId: user.managerId,
+  };
 }
 
 /**
@@ -60,28 +68,20 @@ export async function requireSession(): Promise<Session> {
   return session;
 }
 
-export async function requireRole(allowed: readonly Role[]): Promise<Session> {
+/**
+ * Page-level authorization gate. The predicate comes from `lib/auth/policy.ts`,
+ * so every page and route check runs through the same matrix.
+ */
+export async function requirePolicy(check: (session: Session) => boolean): Promise<Session> {
   const session = await requireSession();
 
-  if (!allowed.includes(session.role)) {
+  if (!check(session)) {
     redirect("/forbidden");
   }
 
   return session;
 }
 
-export function canAccessPath(role: Role, pathname: string): boolean {
-  if (pathname.startsWith("/approvals")) {
-    return canManageRequests(role);
-  }
-
-  if (pathname.startsWith("/audit") || pathname.startsWith("/api/audit")) {
-    return canRunAudit(role);
-  }
-
-  if (pathname.startsWith("/settings")) {
-    return canConfigurePolicies(role);
-  }
-
-  return true;
+export async function requireRole(allowed: readonly Role[]): Promise<Session> {
+  return requirePolicy((session) => allowed.includes(session.role));
 }

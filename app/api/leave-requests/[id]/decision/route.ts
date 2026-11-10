@@ -4,7 +4,6 @@ import { AppError } from "@/lib/api/errors";
 import { withApiHandler } from "@/lib/api/handler";
 import { getSession } from "@/lib/auth/session";
 import { decideLeaveRequest } from "@/lib/db/leave";
-import { findUserByEmail } from "@/lib/db/users";
 import type { LeaveDecisionResult } from "@/lib/types";
 import { decisionInputSchema } from "@/lib/validation/leave";
 
@@ -19,13 +18,7 @@ export const POST = withApiHandler<LeaveDecisionResult, { id: string }>(
       throw AppError.unauthenticated();
     }
 
-    const user = await findUserByEmail(session.email);
-
-    if (!user) {
-      throw AppError.forbidden("No employee record is linked to this account.");
-    }
-
-    if (user.role !== "manager") {
+    if (session.role !== "manager") {
       throw AppError.forbidden("Manager access is required.");
     }
 
@@ -52,8 +45,8 @@ export const POST = withApiHandler<LeaveDecisionResult, { id: string }>(
 
     return decideLeaveRequest({
       requestId: parsedId.data,
-      managerId: user.id,
-      managerName: user.name,
+      managerId: session.id,
+      managerName: session.name,
       decision: input.decision,
       reason: input.reason,
     });

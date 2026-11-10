@@ -7,15 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
-import { viewerFor } from "@/lib/auth/access";
 import { requireSession } from "@/lib/auth/session";
-import { requestsForEmployee } from "@/lib/mock/data";
+import { currentEmployee, requestsForEmployee } from "@/lib/mock/data";
 
 export const metadata = { title: "My requests" };
 
 export default async function RequestsPage() {
   const session = await requireSession();
-  const viewer = viewerFor(session);
+  const viewer = currentEmployee(session.role);
   const requests = requestsForEmployee(viewer.id);
   const counts = {
     pending: requests.filter((request) => request.status === "pending").length,
