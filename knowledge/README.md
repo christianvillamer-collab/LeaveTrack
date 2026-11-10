@@ -23,6 +23,7 @@
 | `retros/task-017.md`               | TASK-017 accrual ledger, idempotency proof, cron auth, backlog      |
 | `retros/task-018.md`               | TASK-018 per-type isolation proof, Unpaid bypass, test gotchas      |
 | `retros/e2-02.md`                  | E2-02 real-auth results, fail-closed branches, deferred subject id  |
+| `retros/e2-03.md`                  | E2-03 policy results, matrix tests, E2-05 fixture-actor deferral    |
 
 Source documents remain authoritative:
 
