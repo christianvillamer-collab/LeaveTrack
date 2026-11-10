@@ -90,7 +90,7 @@ The app uses **RBAC + relationship-based scoping**, not RBAC alone. See `ADR-Lea
 - `users.manager_id` gates _which records_ a manager may act on.
 - Resource scope is always a SQL predicate (`WHERE employee.manager_id = :current_user_id`), never a client-side filter.
 - The DB `users.role` is the source of truth; neither a provider claim nor a cookie role is trusted for authorization.
-- `lib/auth/access.ts` is Day 0 presentation guarding (it reads mock fixtures) and is replaced, not extended, by E2-03/E2-05.
+- All page and route authorization checks call the pure `lib/auth/policy.ts` matrix (an `Actor` of DB `id` + `role` plus the record's scope). `lib/auth/access.ts` was deleted in E2-03; only the fixture-backed pages still use mock actors until E2-05.
 - HR override is a separate audited action, not a blanket "HR can do anything."
 
 | Action                  | Employee  | Manager                   | HR Admin                        |

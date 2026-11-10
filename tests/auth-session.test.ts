@@ -69,16 +69,18 @@ beforeEach(() => {
 });
 
 describe("getSession", () => {
-  it("returns the role and name from the linked employee row", async () => {
+  it("returns the id, role, and manager from the linked employee row", async () => {
     await expect(getSession()).resolves.toEqual({
+      id: "user-1",
       role: "employee",
       name: "Maya Chen",
       email: "maya.chen@leavetrack.demo",
+      managerId: "manager-1",
     });
     expect(state.lookedUpEmail).toBe("maya.chen@leavetrack.demo");
   });
 
-  it("ignores provider role claims", async () => {
+  it("ignores provider role claims and keeps the DB role", async () => {
     state.providerUser = {
       email: "maya.chen@leavetrack.demo",
       email_confirmed_at: "2026-01-01T00:00:00.000Z",
@@ -88,7 +90,7 @@ describe("getSession", () => {
 
     const session = await getSession();
 
-    expect(session?.role).toBe("employee");
+    expect(session).toMatchObject({ id: "user-1", role: "employee" });
   });
 
   it("treats a missing auth configuration as unauthenticated", async () => {

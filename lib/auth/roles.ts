@@ -19,15 +19,3 @@ export const ROLE_HOME = "/dashboard";
 export function isRole(value: string | undefined | null): value is Role {
   return value === "employee" || value === "manager" || value === "hr_admin";
 }
-
-export function canManageRequests(role: Role): boolean {
-  return role === "manager" || role === "hr_admin";
-}
-
-export function canRunAudit(role: Role): boolean {
-  return role === "hr_admin";
-}
-
-export function canConfigurePolicies(role: Role): boolean {
-  return role === "hr_admin";
-}

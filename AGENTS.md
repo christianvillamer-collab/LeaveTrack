@@ -47,9 +47,11 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   `307 → /login`, so runtime secrets would loop `login ↔ dashboard`. `app/(auth)/layout.tsx` must stay
   session-free — the login page itself redirects an existing session to `/dashboard`.
 - Session plumbing: `lib/auth/supabase.ts` (server/proxy clients + `isAuthConfigured`),
-  `lib/auth/session.ts` (`getSession`, `requireSession`, `requireRole`, `canAccessPath`) and
-  `lib/auth/roles.ts` (role permissions). `getSession()` verifies the provider user, requires a
-  confirmed email, then maps it to exactly one `users` row; the DB role and name are authoritative.
+  `lib/auth/session.ts` (`getSession`, `requireSession`, `requireRole`, `requirePolicy`) and
+  `lib/auth/roles.ts` (role taxonomy/labels). `lib/auth/policy.ts` is the single authorization
+  matrix; pages and routes pass it an `Actor` (`id` + DB `role`). `getSession()` verifies the
+  provider user, requires a confirmed email, then maps it to exactly one `users` row; the DB role,
+  id, manager, and name are authoritative.
 - Login is a **Server Action** in `app/(auth)/login/actions.ts`; it is deliberately not an API
   route. Supabase Auth checks the credentials, and an authenticated email with no `users` row is
   signed out. `GET /auth/callback` completes magic-link/OAuth/confirmation redirects. Post-login

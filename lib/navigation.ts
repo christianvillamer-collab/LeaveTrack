@@ -9,7 +9,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { canManageRequests, canRunAudit, type Role } from "@/lib/auth/roles";
+import { canManageRequests, canRunAudit } from "@/lib/auth/policy";
+import type { Role } from "@/lib/auth/roles";
 
 export interface NavItem {
   href: string;

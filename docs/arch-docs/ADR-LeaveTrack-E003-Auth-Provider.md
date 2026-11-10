@@ -72,7 +72,9 @@ Rejected options:
 
 ## Consequences
 
-- The `proxy.ts` guard, `getSession()`, `requireRole()`, and `canAccessPath()` shapes should remain; only the session issuer changes.
+- The `proxy.ts` guard and `getSession()` shapes should remain; only the session issuer changes.
+  E2-03 replaced `canAccessPath()` with `requirePolicy()` and moved per-action checks into
+  `lib/auth/policy.ts`.
 - Add a stable `auth_subject` (or provider user id) to `users`, or require a unique case-insensitive email match. Prefer an explicit subject column to survive email changes.
 - The DB `users.role` remains the authorization source of truth; provider role claims are not trusted for authorization.
 - Document the cutover and rollback: how existing mock users map to real identities, how sessions are invalidated, and how to revert to the mock in local development.

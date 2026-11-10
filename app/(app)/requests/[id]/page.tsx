@@ -13,9 +13,15 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
-import { canDecideRequest, canViewRequest } from "@/lib/auth/access";
+import { canDecideRequest, canViewRequest } from "@/lib/auth/policy";
 import { requireSession } from "@/lib/auth/session";
-import { auditForRequest, balancesFor, employeeFor, requestById } from "@/lib/mock/data";
+import {
+  auditForRequest,
+  balancesFor,
+  currentEmployee,
+  employeeFor,
+  requestById,
+} from "@/lib/mock/data";
 import { formatDate, formatDateRange, formatDateTime, formatDays } from "@/lib/utils/format";
 
 export async function generateMetadata({
@@ -45,12 +51,21 @@ export default async function RequestDetailPage({ params }: { params: Promise<{ 
     notFound();
   }
 
-  if (!canViewRequest(session, request)) {
+  // Fixture requests use mock `u-*` ids, not the DB UUIDs in the session, so the
+  // policy actor comes from the fixture until E2-05 replaces this page's data.
+  const actor = { id: currentEmployee(session.role).id, role: session.role };
+  const scope = {
+    ownerId: request.employee.id,
+    ownerManagerId: request.employee.managerId,
+    status: request.status,
+  };
+
+  if (!canViewRequest(actor, scope)) {
     redirect("/forbidden");
   }
 
   const events = auditForRequest(request.id);
-  const canDecide = canDecideRequest(session, request);
+  const canDecide = canDecideRequest(actor, scope);
   const manager = request.employee.managerId ? employeeFor(request.employee.managerId) : null;
   const balance = balancesFor(request.employee.id).find(
     (entry) => entry.leaveType.id === request.leaveType.id,

@@ -9,31 +9,24 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { requireRole } from "@/lib/auth/session";
+import { canManageRequests, canRunAudit, canViewTeam } from "@/lib/auth/policy";
+import { requirePolicy } from "@/lib/auth/session";
 import { getTeamLeaveData } from "@/lib/db/leave";
-import { findUserByEmail } from "@/lib/db/users";
 import type { TeamLeaveData } from "@/lib/types";
 
 export const metadata = { title: "Approvals" };
 
-const DEMO_EMAILS = [
-  "daniel.okafor@leavetrack.demo",
-  "erin.walsh@leavetrack.demo",
-  "priya.nair@leavetrack.demo",
-];
-
 export default async function ApprovalsPage() {
-  const session = await requireRole(["manager", "hr_admin"]);
+  const session = await requirePolicy(canManageRequests);
+  const isManager = canViewTeam(session);
+  const isHr = canRunAudit(session);
 
   let databaseUnavailable = false;
-  let user: Awaited<ReturnType<typeof findUserByEmail>> = null;
   let data: TeamLeaveData = { requests: [], directReports: [] };
 
   try {
-    user = await findUserByEmail(session.email);
-
-    if (user?.role === "manager") {
-      data = await getTeamLeaveData(user.id);
+    if (isManager) {
+      data = await getTeamLeaveData(session.id);
     }
   } catch (error) {
     if (error instanceof AppError && error.code === ERROR_CODES.DATABASE_NOT_CONFIGURED) {
@@ -42,9 +35,6 @@ export default async function ApprovalsPage() {
       throw error;
     }
   }
-
-  const isManager = user?.role === "manager";
-  const isHr = user?.role === "hr_admin";
   const pending = data.requests.filter((request) => request.status === "pending");
   const decided = data.requests.filter((request) => request.status !== "pending");
   const reports = data.directReports;
@@ -69,17 +59,15 @@ export default async function ApprovalsPage() {
         }
       />
 
-      {!isManager ? (
+      {!isManager || databaseUnavailable ? (
         <Alert
-          variant={databaseUnavailable || user ? "warning" : "danger"}
+          variant="warning"
           title={
             databaseUnavailable
               ? "Database not configured"
-              : !user
-                ? "No employee record for this account"
-                : isHr
-                  ? "HR override is not part of TASK-013"
-                  : "Manager access required"
+              : isHr
+                ? "HR override is not part of TASK-013"
+                : "Manager access required"
           }
         >
           {databaseUnavailable ? (
@@ -90,18 +78,6 @@ export default async function ApprovalsPage() {
                 <code className="font-mono">.env.local</code>, then run:
               </p>
               <p className="text-caption font-mono">npm run db:migrate && npm run db:seed</p>
-            </div>
-          ) : !user ? (
-            <div className="space-y-2">
-              <p>
-                The mock login accepts any email, but the queue requires a seeded DB manager. Sign
-                out from the sidebar and sign in with one of these:
-              </p>
-              <ul className="text-caption list-inside list-disc font-mono">
-                {DEMO_EMAILS.map((email) => (
-                  <li key={email}>{email}</li>
-                ))}
-              </ul>
             </div>
           ) : isHr ? (
             <p>

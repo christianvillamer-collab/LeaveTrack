@@ -1,8 +1,8 @@
 import { AppError } from "@/lib/api/errors";
 import { withApiHandler } from "@/lib/api/handler";
+import { canViewTeam } from "@/lib/auth/policy";
 import { getSession } from "@/lib/auth/session";
 import { createLeaveRequest, getMyLeaveData, getTeamLeaveData } from "@/lib/db/leave";
-import { findUserByEmail } from "@/lib/db/users";
 import { leaveRequestInputSchema, leaveRequestScopeSchema } from "@/lib/validation/leave";
 
 export const runtime = "nodejs";
@@ -18,21 +18,15 @@ export const GET = withApiHandler("GET /api/leave-requests", async (request) => 
     request.nextUrl.searchParams.get("scope") ?? undefined,
   );
 
-  const user = await findUserByEmail(session.email);
-
-  if (!user) {
-    throw AppError.forbidden("No employee record is linked to this account.");
-  }
-
   if (scope === "team") {
-    if (user.role !== "manager") {
+    if (!canViewTeam({ id: session.id, role: session.role })) {
       throw AppError.forbidden("Manager access is required for scope=team.");
     }
 
-    return getTeamLeaveData(user.id);
+    return getTeamLeaveData(session.id);
   }
 
-  return getMyLeaveData(user.id);
+  return getMyLeaveData(session.id);
 });
 
 export const POST = withApiHandler(
@@ -53,14 +47,9 @@ export const POST = withApiHandler(
     }
 
     const input = leaveRequestInputSchema.parse(body);
-    const user = await findUserByEmail(session.email);
-
-    if (!user) {
-      throw AppError.forbidden("No employee record is linked to this account.");
-    }
 
     return createLeaveRequest({
-      userId: user.id,
+      userId: session.id,
       leaveTypeId: input.leaveTypeId,
       startDate: input.startDate,
       endDate: input.endDate,

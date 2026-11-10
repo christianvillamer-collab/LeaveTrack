@@ -10,32 +10,20 @@ import { PageHeader } from "@/components/ui/page-header";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { requireSession } from "@/lib/auth/session";
 import { getBalancesForUser, listLeaveTypes } from "@/lib/db/leave";
-import { findUserByEmail } from "@/lib/db/users";
 import type { LeaveBalance, LeaveType } from "@/lib/types";
 import { formatDate, formatDays } from "@/lib/utils/format";
 
 export const metadata = { title: "Request leave" };
 
-const DEMO_EMAILS = [
-  "maya.chen@leavetrack.demo",
-  "daniel.okafor@leavetrack.demo",
-  "priya.nair@leavetrack.demo",
-];
-
 export default async function NewRequestPage() {
   const session = await requireSession();
 
   let databaseUnavailable = false;
-  let user: Awaited<ReturnType<typeof findUserByEmail>> = null;
   let leaveTypes: LeaveType[] = [];
   let balances: LeaveBalance[] = [];
 
   try {
-    user = await findUserByEmail(session.email);
-
-    if (user) {
-      [leaveTypes, balances] = await Promise.all([listLeaveTypes(), getBalancesForUser(user.id)]);
-    }
+    [leaveTypes, balances] = await Promise.all([listLeaveTypes(), getBalancesForUser(session.id)]);
   } catch (error) {
     if (error instanceof AppError && error.code === ERROR_CODES.DATABASE_NOT_CONFIGURED) {
       databaseUnavailable = true;
@@ -44,7 +32,7 @@ export default async function NewRequestPage() {
     }
   }
 
-  const ready = Boolean(user) && leaveTypes.length > 0;
+  const ready = leaveTypes.length > 0;
   const balanceSummary = balances.map((balance) => ({
     leaveTypeId: balance.leaveType.id,
     available: balance.confirmed,
@@ -76,13 +64,7 @@ export default async function NewRequestPage() {
       {!ready ? (
         <Alert
           variant="warning"
-          title={
-            databaseUnavailable
-              ? "Database not configured"
-              : user
-                ? "No leave types configured"
-                : "No employee record for this account"
-          }
+          title={databaseUnavailable ? "Database not configured" : "No leave types configured"}
         >
           {databaseUnavailable ? (
             <div className="space-y-2">
@@ -93,24 +75,12 @@ export default async function NewRequestPage() {
               </p>
               <p className="text-caption font-mono">npm run db:migrate && npm run db:seed</p>
             </div>
-          ) : user ? (
+          ) : (
             <div className="space-y-2">
               <p>
                 The leave_types table is empty. Run the seed to create Vacation, Sick, and Unpaid.
               </p>
               <p className="text-caption font-mono">npm run db:seed</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <p>
-                The mock login accepts any email, but submission requires a seeded DB account. Sign
-                out from the sidebar and sign in with one of these demo emails:
-              </p>
-              <ul className="text-caption list-inside list-disc font-mono">
-                {DEMO_EMAILS.map((email) => (
-                  <li key={email}>{email}</li>
-                ))}
-              </ul>
             </div>
           )}
         </Alert>
