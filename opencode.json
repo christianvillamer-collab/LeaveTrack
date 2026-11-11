@@ -1,9 +1,23 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "nexus-mcp": {
-      "type": "local",
-      "command": ["uvx", "--refresh", "--from", "nexus-dev-toolkit", "nexus-mcp"]
+    "timeout": {
+      "startup": 60000,
+      "catalog": 60000
+    },
+    "servers": {
+      "nexus-mcp": {
+        "type": "local",
+        "command": ["uvx", "--refresh", "--from", "nexus-dev-toolkit", "nexus-mcp"]
+      },
+      "github": {
+        "type": "remote",
+        "url": "https://api.githubcopilot.com/mcp/",
+        "oauth": false,
+        "headers": {
+          "Authorization": "Bearer {file:.env.github}"
+        }
+      }
     }
   }
 }
