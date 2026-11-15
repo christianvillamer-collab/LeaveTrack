@@ -6,7 +6,7 @@ Traces to: `docs/prd/PRD-LeaveTrack-v1.0.md`
 
 - **Frontend/Backend:** Next.js 16 (App Router), TypeScript.
 - **Database:** Postgres via Supabase.
-- **Auth (Day 0):** mock cookie session — see `ADR-LeaveTrack-E001`. Day 1 provider is TBD — see `ADR-LeaveTrack-E003`.
+- **Auth:** Supabase Auth via `@supabase/ssr` — accepted in `ADR-LeaveTrack-E003`, implemented by E2-02. (The Day 0 `mock-*` cookie session described in `ADR-LeaveTrack-E001` is removed.)
 - **Deployment target:** Vercel (app), Supabase (managed Postgres).
 
 Rationale: the team already runs Next.js + Supabase on other projects (fits nexus's Day 0 mock-auth-mock-data pattern directly); no NFR here demands anything heavier.
@@ -52,10 +52,19 @@ Error format: `{ success: false, error: { code, message } }` on every non-2xx re
 - Session cookies are issued by Supabase Auth through `@supabase/ssr`: httpOnly, `SameSite=Lax`, `Secure` in production. `proxy.ts` refreshes them on every matched request.
 - Authorization is **RBAC + relationship-based scoping** (`ADR-LeaveTrack-E004`): roles gate actions, `users.manager_id` gates records, and scope is always a SQL predicate.
 
+### Database authorization
+
+- Database access is **deny-by-default** for the Supabase client roles (`ADR-LeaveTrack-E005`). `anon` and `authenticated` hold no table privileges in `public` — including for `schema_migrations` — and future tables created by the migration owner do not inherit any. PostgREST therefore cannot turn the public anon key into row access, and `AS RESTRICTIVE` RLS deny policies are a second layer that survives a future permissive allow policy being added by mistake.
+- All seven tables (`users`, `leave_types`, `leave_policies`, `leave_balances`, `leave_requests`, `audit_log`, `accrual_ledger`) have RLS enabled with an explicit `leavetrack_app` allow policy and an explicit `anon, authenticated` restrictive deny policy. The decision and grant matrix live in `ADR-LeaveTrack-E005`.
+- The server-only `leavetrack_app` role is `NOLOGIN NOBYPASSRLS` with verb-level grants only: `SELECT` on reference/identity tables, `SELECT/INSERT/UPDATE` on balances and requests, `SELECT/INSERT` on the audit log and accrual ledger. It never receives `DELETE`, `TRUNCATE`, or DDL. A pre-existing role is normalized to those attributes by the migration.
+- `EXECUTE` on the application trigger functions is revoked from `PUBLIC`, `anon`, and `authenticated`; triggers are unaffected because `EXECUTE` is checked at trigger-creation time.
+- The app currently connects as the Supabase owner (`postgres.<project>`), which bypasses RLS. `lib/auth/policy.ts` plus scoped SQL remain the live authorization gate; the least-privilege role is the target server credential and its cutover is an ops step, not a schema change.
+
 ## Deployment Topology
 
 - Single Next.js app on Vercel, single Supabase Postgres instance (pooled connection, not direct).
 - Monthly accrual job (US-07) runs as a scheduled Vercel Cron hitting `/api/jobs/accrual`.
+- Migrations run as the owner via `DIRECT_URL` (DDL needs ownership). The app's `DATABASE_URL` is the least-privilege `leavetrack_app` role after the documented cutover in `ADR-LeaveTrack-E005`; rollback is restoring the previous connection string.
 
 ## Epic 2 — Production Readiness & Flow Completion
 
@@ -107,6 +116,7 @@ The app uses **RBAC + relationship-based scoping**, not RBAC alone. See `ADR-Lea
 - `ADR-LeaveTrack-E002` — accrual idempotency (referenced by this document; added in Epic 2).
 - `ADR-LeaveTrack-E003` — auth provider (accepted: Supabase Auth; implemented by E2-02).
 - `ADR-LeaveTrack-E004` — authorization model (RBAC + relationship scoping).
+- `ADR-LeaveTrack-E005` — database authorization (RLS deny-by-default + server-only least-privilege role; implemented by E2-04).
 
 ### Sequencing
 
@@ -122,4 +132,4 @@ Payroll integration, multi-country holiday calendars, biometric attendance, nati
 ## Open Questions
 
 - ~~Should `leave_policies` support mid-year policy changes (e.g., a promotion changing accrual rate)?~~ **Resolved in Epic 2 (E2-08):** effective-dated policy rates; the accrual job uses the rate effective for the run period.
-- Which provider replaces the mock cookie? **Open — `ADR-LeaveTrack-E003` (E2-01).**
+- Which provider replaces the mock cookie? **Resolved: Supabase Auth (`ADR-LeaveTrack-E003`, accepted; implemented by E2-02).**

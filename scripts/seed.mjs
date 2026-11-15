@@ -16,6 +16,23 @@ if (!connectionString) {
   process.exit(1);
 }
 
+// The seed writes tables the least-privilege app role cannot touch
+// (ADR-LeaveTrack-E005). Keep this on the owner connection.
+const connectionRole = (() => {
+  try {
+    return decodeURIComponent(new URL(connectionString).username);
+  } catch {
+    return "";
+  }
+})();
+
+if (connectionRole === "leavetrack_app") {
+  process.stderr.write(
+    "The seed needs the owner role, not leavetrack_app. Set DIRECT_URL to the owner connection.\n",
+  );
+  process.exit(1);
+}
+
 const isLocal = /(?:localhost|127\.0\.0\.1)/.test(connectionString);
 const sql = postgres(connectionString, {
   max: 1,

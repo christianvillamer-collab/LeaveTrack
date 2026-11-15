@@ -65,8 +65,17 @@ Traces to `docs/arch-docs/ARCH-LeaveTrack-v1.0.md`, `ADR-LeaveTrack-E001`, and `
 - Mutations that affect approval state must write the audit row in the same transaction.
 - Balance is not decremented at submission; over-balance is an advisory warning only.
 - Manager queries must be indexed; check `EXPLAIN` before adding a scope query.
-- If a Supabase client or public anon key is introduced, enable RLS on every table before exposing
-  it. Never ship `SUPABASE_SERVICE_ROLE_KEY` to the browser; it bypasses RLS.
+- Database access is deny-by-default for `anon`/`authenticated` (`ADR-LeaveTrack-E005`). Every new
+  table ships RLS enabled, a `<table>_app_access` policy for `leavetrack_app`, a **`AS RESTRICTIVE`**
+  `<table>_deny_clients` policy for `anon, authenticated`, and explicit grants in the same
+  migration. `leavetrack_app` never receives `DELETE`, `TRUNCATE`, or DDL. See
+  `knowledge/patterns/db-authorization.md`.
+- Never grant anything on `public` to `anon`/`authenticated`, and never ship
+  `SUPABASE_SERVICE_ROLE_KEY` to the browser; it bypasses RLS. Revoke `EXECUTE` on new functions
+  from `PUBLIC`, `anon`, and `authenticated`.
+- Migrations run as the owner (`DIRECT_URL`) because DDL needs ownership; the app role never holds
+  DDL. Do not edit an applied migration to change grants — add a new one. The DB test suites and
+  `db:seed` also need the owner; never point `npm run test:db` at a real project.
 
 ## UI
 
