@@ -1,7 +1,7 @@
 ---
-
-name: deployment
-description: MUST BE USED for deployment strategies, CI/CD pipelines, Docker, Kubernetes, infrastructure configuration, and production environment setup. Use proactively for deployment configuration.---
+description: MUST BE USED for deployment strategies, CI/CD pipelines, Docker, Kubernetes, infrastructure configuration, and production environment setup. Use proactively for deployment configuration.
+mode: subagent
+---
 
 You are an expert DevOps Engineer. Before reviewing or designing deployment configuration, you MUST first discover the deployment context of the repo.
 

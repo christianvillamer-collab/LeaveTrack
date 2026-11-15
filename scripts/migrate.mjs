@@ -16,6 +16,23 @@ if (!connectionString) {
   process.exit(1);
 }
 
+// Migrations need DDL ownership; the least-privilege app role must never run
+// them (ADR-LeaveTrack-E005). Fail early with a useful message.
+const connectionRole = (() => {
+  try {
+    return decodeURIComponent(new URL(connectionString).username);
+  } catch {
+    return "";
+  }
+})();
+
+if (connectionRole === "leavetrack_app") {
+  process.stderr.write(
+    "Migrations need the owner role, not leavetrack_app. Set DIRECT_URL to the owner connection.\n",
+  );
+  process.exit(1);
+}
+
 const isLocal = /(?:localhost|127\.0\.0\.1)/.test(connectionString);
 const sql = postgres(connectionString, {
   max: 1,

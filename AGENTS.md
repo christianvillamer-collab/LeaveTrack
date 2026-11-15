@@ -93,6 +93,15 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   `npm run auth:seed` only and must never reach the browser.
 - Schema lives in `db/migrations/0001_init.sql`; seeds in `db/seed.sql`. Requests and audit rows
   reject hard deletes at the trigger level. Never add a hard-delete path.
+- The database is **deny-by-default** for the Supabase client roles (`ADR-LeaveTrack-E005`,
+  `db/migrations/0003_db_authorization.sql`): `anon`/`authenticated` have no grants and
+  `AS RESTRICTIVE` RLS deny policies (a permissive deny would be OR'd away by a future allow
+  policy); `leavetrack_app` is the server-only `NOBYPASSRLS` target with verb-level grants and no
+  `DELETE`/`TRUNCATE`. New tables must ship RLS + both policies + grants in the same migration, and
+  new functions must revoke `EXECUTE` from `PUBLIC`/`anon`/`authenticated`. The app still connects
+  as the owner (`postgres.<project>`), which bypasses RLS, so `lib/auth/policy.ts` and the scoped SQL
+  remain the live gate. DB tests and `db:seed` need the owner role; `npm run test:db` writes and must
+  never be pointed at a real project. See `knowledge/patterns/db-authorization.md`.
 - The accrual job (`GET`/`POST /api/jobs/accrual`) is the only unauthenticated non-health API path:
   `proxy.ts` lets it through and the route requires `Authorization: Bearer $CRON_SECRET`. Vercel Cron
   issues GET, so both verbs share one handler. Idempotency lives in `accrual_ledger`

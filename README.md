@@ -110,6 +110,14 @@ npm run db:seed
 - The seed uses fixed UUIDs and `ON CONFLICT DO NOTHING`, so it is safe to run repeatedly.
 - `leave_requests` and `audit_log` reject hard deletes at the trigger level. Requests are
   soft-deleted with `is_deleted`; audit rows are append-only.
+- **Owner-only commands.** After the `ADR-LeaveTrack-E005` cutover (`DATABASE_URL` → the
+  least-privilege `leavetrack_app` role), migrations, the seed, and `npm run test:db` must still use
+  the owner: `npm run db:migrate`, `npm run db:seed` (they refuse `leavetrack_app`) and
+  `DATABASE_URL="$DIRECT_URL" npm run test:db`. The DB suites write (they update `users`, delete
+  ledger rows, and leave append-only audit rows), so never point `npm run test:db` at a real
+  project. `npx vitest run tests/db-authorization.integration.test.ts` is read-only and safe.
+- The database is deny-by-default for `anon`/`authenticated` (no grants, restrictive RLS deny
+  policies). The app role never receives `DELETE` or DDL. See `knowledge/patterns/db-authorization.md`.
 
 ## Authentication (E2-02)
 
