@@ -13,9 +13,9 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { canRunAudit } from "@/lib/auth/policy";
 import { requirePolicy } from "@/lib/auth/session";
 import { getAuditReport } from "@/lib/db/audit";
+import { getAccrualSummary } from "@/lib/db/accrual";
 import { listEmployees, type EmployeeDirectoryEntry } from "@/lib/db/users";
-import { accrualSummary } from "@/lib/mock/data";
-import type { AuditReport } from "@/lib/types";
+import type { AccrualSummary, AuditReport } from "@/lib/types";
 import { formatDate } from "@/lib/utils/format";
 
 export const metadata = { title: "Audit log" };
@@ -33,6 +33,12 @@ export default async function AuditPage({
   let employees: EmployeeDirectoryEntry[] = [];
   let report: AuditReport | null = null;
   let selectedEmployeeId: string | undefined;
+  let accrual: AccrualSummary = {
+    lastPeriod: null,
+    lastRunAt: null,
+    nextRunAt: null,
+    peopleProcessed: 0,
+  };
 
   try {
     employees = await listEmployees();
@@ -46,6 +52,8 @@ export default async function AuditPage({
     if (selectedEmployeeId) {
       report = await getAuditReport(selectedEmployeeId);
     }
+
+    accrual = await getAccrualSummary();
   } catch (error) {
     if (error instanceof AppError && error.code === ERROR_CODES.DATABASE_NOT_CONFIGURED) {
       databaseUnavailable = true;
@@ -149,10 +157,14 @@ export default async function AuditPage({
             />
             <StatCard
               label="Last accrual"
-              value={formatDate(accrualSummary.lastRunAt)}
-              hint={`Next ${formatDate(accrualSummary.nextRunAt)} · mock until TASK-017`}
+              value={accrual.lastRunAt ? formatDate(accrual.lastRunAt.slice(0, 10)) : "—"}
+              hint={
+                accrual.nextRunAt
+                  ? `Next ${formatDate(accrual.nextRunAt)}`
+                  : "No accrual has run yet"
+              }
               icon={CalendarCheck2}
-              tone="neutral"
+              tone={accrual.lastRunAt ? "success" : "neutral"}
             />
           </section>
 

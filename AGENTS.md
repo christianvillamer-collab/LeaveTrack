@@ -4,9 +4,10 @@
 
 Next.js 16 (App Router) + TypeScript + Tailwind v4 + Postgres/Supabase leave-management app.
 
-**Day 0 scaffold + TASK-011/012/013/014/015/016/017 + E2-02/03/05.** Sign-in uses Supabase Auth
-(`@supabase/ssr`); the mock `mock-*` cookies are gone. The dashboard still reads fixtures from
-`lib/mock/data.ts`; `POST /api/leave-requests` + `/requests/new` write to Postgres, and
+**Day 0 scaffold + TASK-011/012/013/014/015/016/017 + E2-02/03/05/06.** Sign-in uses Supabase Auth
+(`@supabase/ssr`); the mock `mock-*` cookies are gone. The role-aware dashboard reads balances,
+requests, audit rows, policies, and accrual status from Postgres; `POST /api/leave-requests` +
+`/requests/new` write to Postgres, and
 `GET /api/leave-requests` + `/balance` + `/requests` + `/requests/[id]` + the manager
 `/approvals` queue read from it. Managers can approve/reject through
 `POST /api/leave-requests/:id/decision`, and HR reads per-employee reports through
@@ -62,9 +63,10 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   are still refreshed in `proxy.ts`; only `/api/health` and `/api/jobs/accrual` bypass the session
   read entirely. A Server Component cannot persist a rotated refresh token, so skipping that refresh
   can revoke the session via reuse detection.
-- The dashboard still reads `lib/mock/data.ts` (fixtures + selectors); `/requests` and
-  `/requests/[id]` are DB-backed. Types are in `lib/types.ts`. Replace selectors task by task; keep
-  component prop shapes stable.
+- The dashboard is DB-backed per role: employees read `getMyLeaveData`, managers read the
+  SQL-scoped `getTeamLeaveData` queue, and HR reads the org-wide list, directory, policy snapshot,
+  audit counts, and `getAccrualSummary()`. Only `/settings/policies` policy rows still read
+  `lib/mock/data.ts`. Types are in `lib/types.ts`; keep component prop shapes stable.
 - `lib/db/client.ts` is lazy. Importing it must never open a connection. Supabase's transaction
   pooler requires `prepare: false`; keep the pool at one connection for scripts.
 - `lib/db/*` owns SQL. `POST /api/leave-requests` resolves the DB user from the session email and

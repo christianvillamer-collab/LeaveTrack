@@ -163,6 +163,7 @@ export interface CreateLeaveRequestResult {
 
 export interface MyLeaveRequest {
   id: string;
+  reference: string;
   leaveType: LeaveType;
   startDate: string;
   endDate: string;
@@ -184,6 +185,7 @@ export interface TeamMember {
 
 export interface TeamLeaveRequest {
   id: string;
+  reference: string;
   employee: TeamMember;
   leaveType: LeaveType;
   startDate: string;
@@ -218,4 +220,39 @@ export interface AccrualResult {
   usersAccrued: number;
   balancesAccrued: number;
   totalDays: number;
+}
+
+/**
+ * Org-level accrual status read from `accrual_ledger`. A never-run accrual is
+ * all-null rather than a fabricated date (ADR-E002: the ledger is the marker,
+ * never `leave_balances.updated_at`).
+ */
+export interface AccrualSummary {
+  lastPeriod: string | null;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  peopleProcessed: number;
+}
+
+/** One row of the HR policy snapshot, grouped from `leave_policies`. */
+export interface PolicyOverview {
+  leaveType: LeaveType;
+  accrualPerMonth: number;
+  assignedEmployees: number;
+}
+
+/** Directory row with the manager name resolved by a self join. */
+export interface DirectoryEntry {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  managerId: string | null;
+  managerName: string | null;
+}
+
+/** Org-wide request list plus headcount, the two inputs HR totals need. */
+export interface OrgLeaveOverview {
+  requests: RequestSummary[];
+  headcount: number;
 }

@@ -12,7 +12,6 @@ import {
   Users,
 } from "lucide-react";
 
-import { ApprovalCard } from "@/components/domain/approval-card";
 import { AuditTrail } from "@/components/domain/audit-trail";
 import { BalanceCard } from "@/components/domain/balance-card";
 import { LeaveTypeBadge } from "@/components/domain/leave-type-badge";
@@ -33,51 +32,136 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import { ROLE_LABELS } from "@/lib/auth/roles";
 import { requireSession, type Session } from "@/lib/auth/session";
 import {
-  accrualSummary,
-  allAuditEvents,
-  allRequests,
-  auditForEmployee,
-  balancesFor,
-  currentEmployee,
-  directReports,
-  employees,
-  pendingTeamRequests,
-  policies,
-  requestsForEmployee,
-  teamRequests,
-} from "@/lib/mock/data";
-import type { Employee, LeaveRequest } from "@/lib/types";
+  countAuditEvents,
+  listAuditEventsForEmployee,
+  listRecentAuditEvents,
+} from "@/lib/db/audit";
+import { getAccrualSummary } from "@/lib/db/accrual";
+import {
+  getBalancesForUser,
+  getMyLeaveData,
+  getTeamLeaveData,
+  listScopedLeaveRequests,
+} from "@/lib/db/leave";
+import { listPolicyOverview } from "@/lib/db/policies";
+import { listDirectory } from "@/lib/db/users";
+import {
+  summariseEmployeeLeave,
+  summariseManagerQueue,
+  summariseOrg,
+  todayIso,
+} from "@/lib/domain/dashboard";
+import type {
+  AccrualSummary,
+  AuditEvent,
+  DirectoryEntry,
+  LeaveBalance,
+  MyLeaveData,
+  OrgLeaveOverview,
+  PolicyOverview,
+  TeamLeaveData,
+} from "@/lib/types";
 import { formatDate, formatDateRange, formatDays } from "@/lib/utils/format";
+
+export const metadata = { title: "Dashboard" };
 
 function firstName(name: string): string {
   return name.split(" ")[0] ?? name;
 }
 
-function upcomingLeave(requests: LeaveRequest[]): LeaveRequest[] {
-  const today = new Date().toISOString().slice(0, 10);
-  return requests
-    .filter((request) => request.startDate >= today && request.status !== "rejected")
-    .sort((a, b) => a.startDate.localeCompare(b.startDate));
-}
-
-function vacationBalance(employeeId: string): string {
-  const balance = balancesFor(employeeId).find((entry) => entry.leaveType.name === "Vacation");
+function balanceValue(balance: LeaveBalance | null): string {
   return balance?.confirmed === null || balance?.confirmed === undefined
     ? "—"
     : formatDays(balance.confirmed);
 }
 
+interface EmployeeViewData {
+  data: MyLeaveData;
+  events: AuditEvent[];
+}
+
+interface ManagerViewData {
+  team: TeamLeaveData;
+  balances: LeaveBalance[];
+}
+
+interface HrViewData {
+  overview: OrgLeaveOverview;
+  directory: DirectoryEntry[];
+  events: AuditEvent[];
+  eventCount: number;
+  policies: PolicyOverview[];
+  accrual: AccrualSummary;
+}
+
 export default async function DashboardPage() {
   const session = await requireSession();
-  const viewer = currentEmployee(session.role);
+
+  let databaseUnavailable = false;
+  let employeeData: EmployeeViewData | null = null;
+  let managerData: ManagerViewData | null = null;
+  let hrData: HrViewData | null = null;
+
+  try {
+    if (session.role === "employee") {
+      const [data, events] = await Promise.all([
+        getMyLeaveData(session.id),
+        listAuditEventsForEmployee(session.id, 3),
+      ]);
+
+      employeeData = { data, events };
+    } else if (session.role === "manager") {
+      const [team, balances] = await Promise.all([
+        getTeamLeaveData(session.id),
+        getBalancesForUser(session.id),
+      ]);
+
+      managerData = { team, balances };
+    } else if (session.role === "hr_admin") {
+      // HR reads the org-wide list, which the scoped SQL only returns for the
+      // `hr_admin` role. No post-query filtering is used to widen access, and
+      // an unrecognized role loads nothing.
+      const [requests, directory, events, eventCount, policies, accrual] = await Promise.all([
+        listScopedLeaveRequests({ id: session.id, role: session.role }),
+        listDirectory(),
+        listRecentAuditEvents(4),
+        countAuditEvents(),
+        listPolicyOverview(),
+        getAccrualSummary(),
+      ]);
+
+      hrData = {
+        overview: { requests, headcount: directory.length },
+        directory,
+        events,
+        eventCount,
+        policies,
+        accrual,
+      };
+    }
+  } catch (error) {
+    if (error instanceof AppError && error.code === ERROR_CODES.DATABASE_NOT_CONFIGURED) {
+      databaseUnavailable = true;
+    } else {
+      throw error;
+    }
+  }
 
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow={`${viewer.team} · ${viewer.jobTitle}`}
-        title={`Welcome back, ${firstName(viewer.name)}`}
+        eyebrow={
+          session.role === "employee"
+            ? "My workspace"
+            : session.role === "manager"
+              ? "Manager workspace"
+              : ROLE_LABELS[session.role]
+        }
+        title={`Welcome back, ${firstName(session.name)}`}
         description={
           session.role === "employee"
             ? "Your balances, upcoming leave, and recent requests in one place."
@@ -95,43 +179,65 @@ export default async function DashboardPage() {
         }
       />
 
-      {session.role === "employee" ? <EmployeeDashboard session={session} viewer={viewer} /> : null}
-      {session.role === "manager" ? <ManagerDashboard viewer={viewer} /> : null}
-      {session.role === "hr_admin" ? <HrDashboard /> : null}
+      {databaseUnavailable ? (
+        <Alert variant="warning" title="Database not configured">
+          <div className="space-y-2">
+            <p>
+              The dashboard reads balances, requests, and audit rows from Postgres. Set{" "}
+              <code className="font-mono">DATABASE_URL</code> in{" "}
+              <code className="font-mono">.env.local</code>, then run:
+            </p>
+            <p className="text-caption font-mono">npm run db:migrate && npm run db:seed</p>
+          </div>
+        </Alert>
+      ) : session.role === "employee" && employeeData ? (
+        <EmployeeDashboard session={session} {...employeeData} />
+      ) : session.role === "manager" && managerData ? (
+        <ManagerDashboard {...managerData} />
+      ) : session.role === "hr_admin" && hrData ? (
+        <HrDashboard data={hrData} />
+      ) : null}
     </div>
   );
 }
 
-function EmployeeDashboard({ session, viewer }: { session: Session; viewer: Employee }) {
-  const myRequests = requestsForEmployee(viewer.id);
-  const balances = balancesFor(viewer.id);
-  const pending = myRequests.filter((request) => request.status === "pending");
-  const upcoming = upcomingLeave(myRequests);
-  const approvedDays = myRequests
-    .filter((request) => request.status === "approved")
-    .reduce((total, request) => total + request.days, 0);
-  const nextLeave = upcoming[0];
+function EmployeeDashboard({
+  session,
+  data,
+  events,
+}: {
+  session: Session;
+  data: MyLeaveData;
+  events: AuditEvent[];
+}) {
+  const summary = summariseEmployeeLeave({ id: session.id, name: session.name }, data, todayIso());
+  const vacation = summary.vacationBalance;
+  const nextLeave = summary.nextLeave;
 
   return (
     <>
       <section aria-label="At a glance" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Vacation available"
-          value={vacationBalance(viewer.id)}
-          hint="Updated after the 1 Nov accrual"
+          value={balanceValue(vacation)}
+          hint={
+            vacation?.lastAccruedAt
+              ? `Last accrued ${formatDate(vacation.lastAccruedAt.slice(0, 10))}`
+              : "No accrual has run yet"
+          }
           icon={CalendarCheck2}
         />
         <StatCard
           label="Pending requests"
-          value={String(pending.length)}
-          hint={pending.length > 0 ? "Awaiting manager review" : "Nothing waiting"}
+          value={String(summary.pendingCount)}
+          hint={summary.pendingCount > 0 ? "Awaiting manager review" : "Nothing waiting"}
           icon={Timer}
           tone="warning"
         />
         <StatCard
           label="Approved days booked"
-          value={String(approvedDays)}
-          hint="Across all leave types this year"
+          value={String(summary.approvedDays)}
+          hint="Across all leave types"
           icon={CheckCircle2}
           tone="success"
         />
@@ -148,10 +254,20 @@ function EmployeeDashboard({ session, viewer }: { session: Session; viewer: Empl
         />
       </section>
 
-      <section aria-label="Your balances" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {balances.map((balance) => (
-          <BalanceCard key={balance.leaveType.id} balance={balance} />
-        ))}
+      <section aria-label="Your balances">
+        {data.balances.length === 0 ? (
+          <EmptyState
+            icon={CalendarCheck2}
+            title="No balances configured"
+            description="Ask HR to assign a leave policy before requesting leave."
+          />
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {data.balances.map((balance) => (
+              <BalanceCard key={balance.leaveType.id} balance={balance} />
+            ))}
+          </div>
+        )}
       </section>
 
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
@@ -166,7 +282,11 @@ function EmployeeDashboard({ session, viewer }: { session: Session; viewer: Empl
             </Button>
           </CardHeader>
           <CardContent className="p-0">
-            <RequestTable requests={myRequests.slice(0, 4)} />
+            <RequestTable
+              requests={summary.requests.slice(0, 4)}
+              emptyTitle="No requests yet"
+              emptyDescription="Your first leave request will appear here with its decision status."
+            />
           </CardContent>
         </Card>
 
@@ -177,7 +297,7 @@ function EmployeeDashboard({ session, viewer }: { session: Session; viewer: Empl
               <CardDescription>Approved and pending time away.</CardDescription>
             </CardHeader>
             <CardContent>
-              {upcoming.length === 0 ? (
+              {summary.upcoming.length === 0 ? (
                 <EmptyState
                   icon={CalendarDays}
                   title="Nothing scheduled"
@@ -186,7 +306,7 @@ function EmployeeDashboard({ session, viewer }: { session: Session; viewer: Empl
                 />
               ) : (
                 <ul className="space-y-3">
-                  {upcoming.slice(0, 3).map((request) => (
+                  {summary.upcoming.slice(0, 3).map((request) => (
                     <li key={request.id} className="flex items-start justify-between gap-3">
                       <div className="space-y-1">
                         <p className="text-small text-foreground font-semibold">
@@ -213,13 +333,13 @@ function EmployeeDashboard({ session, viewer }: { session: Session; viewer: Empl
               <CardDescription>Audit rows tied to your requests.</CardDescription>
             </CardHeader>
             <CardContent>
-              <AuditTrail events={auditForEmployee(viewer.id).slice(0, 3)} />
+              <AuditTrail events={events} />
             </CardContent>
           </Card>
         </div>
       </div>
 
-      {session.role === "employee" && pending.length > 0 ? (
+      {summary.pendingCount > 0 ? (
         <Alert variant="info" title="Pending requests do not reduce your confirmed balance">
           Your manager&apos;s decision will move the amount from pending into your confirmed total.
         </Alert>
@@ -228,39 +348,36 @@ function EmployeeDashboard({ session, viewer }: { session: Session; viewer: Empl
   );
 }
 
-function ManagerDashboard({ viewer }: { viewer: Employee }) {
-  const pending = pendingTeamRequests(viewer.id);
-  const team = teamRequests(viewer.id);
-  const reports = directReports(viewer.id);
-  const decided = team.filter((request) => request.status !== "pending");
-  const currentlyAway = team.filter((request) => request.status === "approved").slice(0, 3);
+function ManagerDashboard({ team, balances }: ManagerViewData) {
+  const queue = summariseManagerQueue(team);
+  const vacation = balances.find((balance) => balance.leaveType.name === "Vacation") ?? null;
 
   return (
     <>
       <section aria-label="Team at a glance" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Awaiting your decision"
-          value={String(pending.length)}
+          value={String(queue.pendingCount)}
           hint="Direct reports only"
           icon={Inbox}
           tone="warning"
         />
         <StatCard
           label="Direct reports"
-          value={String(reports.length)}
+          value={String(queue.reports.length)}
           hint="Your approval scope"
           icon={Users}
           tone="info"
         />
         <StatCard
           label="Team requests"
-          value={String(team.length)}
-          hint="In the current mock window"
+          value={String(team.requests.length)}
+          hint="Every status, newest first"
           icon={ClipboardList}
         />
         <StatCard
           label="Vacation available to you"
-          value={vacationBalance(viewer.id)}
+          value={balanceValue(vacation)}
           hint="Your own balance"
           icon={CalendarCheck2}
           tone="success"
@@ -268,33 +385,25 @@ function ManagerDashboard({ viewer }: { viewer: Employee }) {
       </section>
 
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
+        <Card>
+          <CardHeader className="flex-row items-center justify-between gap-3">
             <div>
-              <h2 className="text-h3 text-foreground">Pending approvals</h2>
-              <p className="text-small text-muted-foreground">
-                Only requests from people who report to you.
-              </p>
+              <CardTitle>Pending approvals</CardTitle>
+              <CardDescription>Only requests from people who report to you.</CardDescription>
             </div>
             <Button asChild variant="secondary" size="sm">
               <Link href="/approvals">Open queue</Link>
             </Button>
-          </div>
-
-          {pending.length === 0 ? (
-            <EmptyState
-              icon={Inbox}
-              title="Your queue is clear"
-              description="New requests from your direct reports will appear here."
+          </CardHeader>
+          <CardContent className="p-0">
+            <RequestTable
+              requests={queue.pending.slice(0, 2)}
+              showEmployee
+              emptyTitle="Your queue is clear"
+              emptyDescription="New requests from your direct reports will appear here."
             />
-          ) : (
-            <div className="space-y-4">
-              {pending.slice(0, 2).map((request) => (
-                <ApprovalCard key={request.id} request={request} />
-              ))}
-            </div>
-          )}
-        </div>
+          </CardContent>
+        </Card>
 
         <div className="space-y-6">
           <Card>
@@ -307,14 +416,23 @@ function ManagerDashboard({ viewer }: { viewer: Employee }) {
                 The queue filters on <code className="text-caption font-mono">manager_id</code> in
                 the query itself, so another team&apos;s requests never reach your screen.
               </Alert>
-              <ul className="text-small text-muted-foreground space-y-2">
-                {reports.map((report) => (
-                  <li key={report.id} className="flex items-center justify-between gap-3">
-                    <span className="truncate">{report.name}</span>
-                    <Badge variant="neutral">{report.team}</Badge>
-                  </li>
-                ))}
-              </ul>
+              {queue.reports.length === 0 ? (
+                <p className="text-small text-muted-foreground">
+                  No one reports to you right now. Your queue stays empty until a manager assignment
+                  changes.
+                </p>
+              ) : (
+                <ul className="text-small text-muted-foreground space-y-2">
+                  {queue.reports.map((report) => (
+                    <li key={report.id} className="flex items-center justify-between gap-3">
+                      <span className="text-foreground truncate">{report.name}</span>
+                      <span className="text-caption text-muted-foreground truncate">
+                        {report.email}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </CardContent>
           </Card>
 
@@ -324,11 +442,11 @@ function ManagerDashboard({ viewer }: { viewer: Employee }) {
               <CardDescription>Approved and rejected requests.</CardDescription>
             </CardHeader>
             <CardContent>
-              {decided.length === 0 ? (
+              {queue.decided.length === 0 ? (
                 <p className="text-small text-muted-foreground">No decisions recorded yet.</p>
               ) : (
                 <ul className="space-y-3">
-                  {decided.slice(0, 3).map((request) => (
+                  {queue.decided.slice(0, 3).map((request) => (
                     <li key={request.id} className="space-y-1">
                       <div className="flex items-center justify-between gap-2">
                         <Link
@@ -357,18 +475,27 @@ function ManagerDashboard({ viewer }: { viewer: Employee }) {
               <CardDescription>Latest approved requests from your team.</CardDescription>
             </CardHeader>
             <CardContent>
-              <ul className="space-y-3">
-                {currentlyAway.map((request) => (
-                  <li key={request.id} className="flex items-center justify-between gap-3">
-                    <span className="text-small text-foreground truncate">
-                      {request.employee.name}
-                    </span>
-                    <span className="text-caption text-muted-foreground">
-                      {formatDateRange(request.startDate, request.endDate)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              {queue.currentlyAway.length === 0 ? (
+                <EmptyState
+                  icon={CalendarDays}
+                  title="No approved leave yet"
+                  description="Approved team leave will be listed here."
+                  className="px-4 py-8"
+                />
+              ) : (
+                <ul className="space-y-3">
+                  {queue.currentlyAway.map((request) => (
+                    <li key={request.id} className="flex items-center justify-between gap-3">
+                      <span className="text-small text-foreground truncate">
+                        {request.employee.name}
+                      </span>
+                      <span className="text-caption text-muted-foreground">
+                        {formatDateRange(request.startDate, request.endDate)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -377,10 +504,9 @@ function ManagerDashboard({ viewer }: { viewer: Employee }) {
   );
 }
 
-function HrDashboard() {
-  const requests = allRequests();
-  const pending = requests.filter((request) => request.status === "pending");
-  const events = allAuditEvents();
+function HrDashboard({ data }: { data: HrViewData }) {
+  const org = summariseOrg(data);
+  const { accrual } = org;
 
   return (
     <>
@@ -390,30 +516,38 @@ function HrDashboard() {
       >
         <StatCard
           label="Pending across the org"
-          value={String(pending.length)}
+          value={String(org.pendingCount)}
           hint="Includes every team"
           icon={Inbox}
           tone="warning"
         />
         <StatCard
           label="People covered"
-          value={accrualSummary.employeesProcessed.toLocaleString("en-GB")}
-          hint="Demo workspace shows 10 people"
+          value={accrual.peopleProcessed.toLocaleString("en-GB")}
+          hint={
+            accrual.lastPeriod
+              ? `Accrued for ${formatDate(accrual.lastPeriod)}`
+              : "No accrual has run yet"
+          }
           icon={Users}
           tone="info"
         />
         <StatCard
           label="Audit events"
-          value={String(events.length)}
-          hint="Mock records in this workspace"
+          value={org.eventCount.toLocaleString("en-GB")}
+          hint="Append-only rows"
           icon={ScrollText}
         />
         <StatCard
           label="Last accrual"
-          value={formatDate(accrualSummary.lastRunAt)}
-          hint={`Next run ${formatDate(accrualSummary.nextRunAt)}`}
+          value={accrual.lastRunAt ? formatDate(accrual.lastRunAt.slice(0, 10)) : "—"}
+          hint={
+            accrual.nextRunAt
+              ? `Next run ${formatDate(accrual.nextRunAt)}`
+              : "No accrual has run yet"
+          }
           icon={CalendarCheck2}
-          tone="success"
+          tone={accrual.lastRunAt ? "success" : "neutral"}
         />
       </section>
 
@@ -434,30 +568,44 @@ function HrDashboard() {
             </Button>
           </CardHeader>
           <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>Leave type</TableHead>
-                  <TableHead>Balance</TableHead>
-                  <TableHead className="text-right">Accrual / month</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {policies.map((policy) => (
-                  <TableRow key={policy.id}>
-                    <TableCell>
-                      <LeaveTypeBadge leaveType={policy.leaveType} />
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {policy.leaveType.tracksBalance ? "Tracked" : "Not tracked"}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {policy.leaveType.tracksBalance ? `${policy.accrualPerMonth} days` : "—"}
-                    </TableCell>
+            {org.policies.length === 0 ? (
+              <EmptyState
+                icon={CalendarCheck2}
+                title="No leave types configured"
+                description="A leave type must exist before accrual can be configured."
+              />
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Leave type</TableHead>
+                    <TableHead>Balance</TableHead>
+                    <TableHead className="text-right">Accrual / month</TableHead>
+                    <TableHead className="text-right">People</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {org.policies.map((policy) => (
+                    <TableRow key={policy.leaveType.id}>
+                      <TableCell>
+                        <LeaveTypeBadge leaveType={policy.leaveType} />
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {policy.leaveType.tracksBalance ? "Tracked" : "Not tracked"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {policy.leaveType.tracksBalance
+                          ? `${policy.accrualPerMonth.toLocaleString("en-GB")} days`
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {policy.assignedEmployees}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
           </CardContent>
         </Card>
 
@@ -472,7 +620,7 @@ function HrDashboard() {
             </Button>
           </CardHeader>
           <CardContent>
-            <AuditTrail events={events.slice(0, 4)} />
+            <AuditTrail events={org.events} />
           </CardContent>
         </Card>
       </div>
@@ -483,58 +631,69 @@ function HrDashboard() {
             <CardTitle>Requests needing a decision</CardTitle>
             <CardDescription>HR override view across all teams.</CardDescription>
           </div>
-          <Badge variant="warning">{pending.length} pending</Badge>
+          <Badge variant="warning">{org.pendingCount} pending</Badge>
         </CardHeader>
         <CardContent className="p-0">
-          <RequestTable requests={pending.slice(0, 5)} showEmployee />
+          <RequestTable
+            requests={org.pending.slice(0, 5)}
+            showEmployee
+            emptyTitle="No pending requests"
+            emptyDescription="Every request across the organisation has a decision."
+          />
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
           <CardTitle>Workspace composition</CardTitle>
-          <CardDescription>Mock employees used to exercise role scoping.</CardDescription>
+          <CardDescription>
+            {org.headcount.toLocaleString("en-GB")} {org.headcount === 1 ? "account" : "accounts"}{" "}
+            with their manager assignment.
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>Employee</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Team</TableHead>
-                <TableHead>Manager</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {employees.map((employee) => (
-                <TableRow key={employee.id}>
-                  <TableCell className="text-foreground font-medium">{employee.name}</TableCell>
-                  <TableCell>
-                    <Badge variant={employee.role === "hr_admin" ? "primary" : "neutral"}>
-                      {employee.role === "hr_admin"
-                        ? "HR Admin"
-                        : employee.role === "manager"
-                          ? "Manager"
-                          : "Employee"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{employee.team}</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {employee.managerId
-                      ? (employees.find((person) => person.id === employee.managerId)?.name ??
-                        "Unknown")
-                      : "—"}
-                  </TableCell>
+          {data.directory.length === 0 ? (
+            <EmptyState
+              icon={Users}
+              title="No accounts yet"
+              description="Seed the workspace or invite employees to populate this table."
+            />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Employee</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Manager</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {data.directory.map((entry) => (
+                  <TableRow key={entry.id}>
+                    <TableCell>
+                      <p className="text-foreground font-medium">{entry.name}</p>
+                      <p className="text-caption text-muted-foreground truncate">{entry.email}</p>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={entry.role === "hr_admin" ? "primary" : "neutral"}>
+                        {ROLE_LABELS[entry.role]}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {entry.managerName ?? "—"}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
 
       <div className="text-caption text-muted-foreground flex items-center gap-2">
         <ShieldCheck aria-hidden="true" className="size-4" />
-        Access is scoped server-side for every role. Mock data is used across this workspace.
+        Every number on this page is read from Postgres and scoped by the signed-in user&apos;s
+        role.
       </div>
     </>
   );

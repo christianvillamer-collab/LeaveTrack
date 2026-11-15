@@ -12,15 +12,36 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { canConfigurePolicies } from "@/lib/auth/policy";
 import { requirePolicy } from "@/lib/auth/session";
-import { accrualSummary, policies } from "@/lib/mock/data";
+import { getAccrualSummary } from "@/lib/db/accrual";
+import { policies } from "@/lib/mock/data";
+import type { AccrualSummary } from "@/lib/types";
 import { formatDate, formatDays } from "@/lib/utils/format";
 
 export const metadata = { title: "Leave policies" };
 
 export default async function PoliciesPage() {
   await requirePolicy(canConfigurePolicies);
+
+  let accrual: AccrualSummary = {
+    lastPeriod: null,
+    lastRunAt: null,
+    nextRunAt: null,
+    peopleProcessed: 0,
+  };
+  let accrualUnavailable = false;
+
+  try {
+    accrual = await getAccrualSummary();
+  } catch (error) {
+    if (error instanceof AppError && error.code === ERROR_CODES.DATABASE_NOT_CONFIGURED) {
+      accrualUnavailable = true;
+    } else {
+      throw error;
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -91,19 +112,27 @@ export default async function PoliciesPage() {
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-muted-foreground">Last completed run</dt>
                 <dd className="text-foreground font-semibold">
-                  {formatDate(accrualSummary.lastRunAt)}
+                  {accrual.lastRunAt
+                    ? formatDate(accrual.lastRunAt.slice(0, 10))
+                    : accrualUnavailable
+                      ? "Unavailable"
+                      : "Never run"}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-muted-foreground">Next scheduled run</dt>
                 <dd className="text-foreground font-semibold">
-                  {formatDate(accrualSummary.nextRunAt)}
+                  {accrual.nextRunAt
+                    ? formatDate(accrual.nextRunAt)
+                    : accrualUnavailable
+                      ? "Unavailable"
+                      : "Not scheduled"}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-muted-foreground">Employees processed</dt>
                 <dd className="text-foreground font-semibold tabular-nums">
-                  {accrualSummary.employeesProcessed.toLocaleString("en-GB")}
+                  {accrual.peopleProcessed.toLocaleString("en-GB")}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3">

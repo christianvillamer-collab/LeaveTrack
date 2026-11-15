@@ -147,6 +147,7 @@ export default async function RequestDetailPage({ params }: { params: Promise<{ 
   const balance = balances.find((entry) => entry.leaveType.id === request.leaveType.id);
   const decisionTarget: TeamLeaveRequest = {
     id: request.id,
+    reference: request.reference,
     employee: {
       id: request.employee.id,
       name: request.employee.name,

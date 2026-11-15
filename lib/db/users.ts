@@ -2,7 +2,7 @@ import "server-only";
 
 import type { Role } from "@/lib/auth/roles";
 import { getDb } from "@/lib/db/client";
-import type { TeamMember } from "@/lib/types";
+import type { DirectoryEntry, TeamMember } from "@/lib/types";
 
 export interface DbUser {
   id: string;
@@ -88,4 +88,42 @@ export async function listDirectReports(managerId: string): Promise<TeamMember[]
     where manager_id = ${managerId}
     order by name
   `;
+}
+
+interface DirectoryRow {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  manager_id: string | null;
+  manager_name: string | null;
+}
+
+/**
+ * Everyone in the workspace with the manager name resolved in SQL, for the HR
+ * dashboard's composition table. There is no `team` or `job_title` column, so
+ * this is the widest identity shape the database can back.
+ */
+export async function listDirectory(): Promise<DirectoryEntry[]> {
+  const rows = await getDb()<DirectoryRow[]>`
+    select
+      u.id,
+      u.name,
+      u.email,
+      u.role,
+      u.manager_id,
+      m.name as manager_name
+    from users u
+    left join users m on m.id = u.manager_id
+    order by u.name
+  `;
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    role: row.role,
+    managerId: row.manager_id,
+    managerName: row.manager_name,
+  }));
 }

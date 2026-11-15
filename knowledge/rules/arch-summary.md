@@ -93,7 +93,7 @@ Epic 1 delivered the core submit → balance → scoped queue → decision → a
 ### Workstreams
 
 1. **Identity and authorization** — real provider (`ADR-E003`), DB-backed identity, centralized RBAC + relationship scoping (`ADR-E004`), DB-level enforcement decision.
-2. **Complete the DB-backed surface** — `/requests` and `/requests/[id]` (done), dashboard, HR override view, policy and people admin.
+2. **Complete the DB-backed surface** — `/requests` and `/requests/[id]` (done), dashboard (done), HR override view, policy and people admin.
 3. **Close PRD acceptance gaps** — submission/decision notifications, HR over-balance override, audit date-range and export.
 4. **Scale and hardening** — pagination and indexes, 800-user load test, route-level authorization tests, fixture reset, accrual-ledger append-only guard, DB-down states, nonce-based CSP.
 
@@ -119,7 +119,7 @@ The app uses **RBAC + relationship-based scoping**, not RBAC alone. See `ADR-Lea
 - `users.manager_id` gates _which records_ a manager may act on.
 - Resource scope is always a SQL predicate (`WHERE employee.manager_id = :current_user_id`), never a client-side filter.
 - The DB `users.role` is the source of truth; neither a provider claim nor a cookie role is trusted for authorization.
-- All page and route authorization checks call the pure `lib/auth/policy.ts` matrix (an `Actor` of DB `id` + `role` plus the record's scope). `lib/auth/access.ts` was deleted in E2-03; `/requests` and `/requests/[id]` now use DB actors, and only the dashboard still uses fixture actors until E2-06.
+- All page and route authorization checks call the pure `lib/auth/policy.ts` matrix (an `Actor` of DB `id` + `role` plus the record's scope). `lib/auth/access.ts` was deleted in E2-03; `/requests`, `/requests/[id]`, and the dashboard now use DB actors, and the dashboard's employee and manager branches read only their own rows.
 - HR override is a separate audited action, not a blanket "HR can do anything."
 
 | Action                  | Employee  | Manager                   | HR Admin                       |

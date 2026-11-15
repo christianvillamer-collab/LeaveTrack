@@ -174,8 +174,8 @@ creates the pending request; Unpaid leave never warns and no balance is deducted
 `users.manager_id` (the scoped queue itself is TASK-013). The response reports
 `managerNotified`. No email provider or notifications table is part of this task.
 
-Known temporary boundary: after submission, `/requests` and the manager dashboard still render mock
-fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed for managers.
+Known temporary boundary: `/settings/policies` still renders mock policy rows until the
+policy-admin task. `/requests`, `/balance`, the dashboard, and the `/approvals` queue are DB-backed.
 
 ## Balance API and page (TASK-012)
 
@@ -214,9 +214,9 @@ fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed fo
   accrual has run. Approving a request no longer moves it, and untracked types (Unpaid) are always
   `null`.
 - `/balance` uses the same `getMyLeaveData` service server-side; the GET route serves API clients.
-- `/requests`, `/requests/[id]`, and the manager dashboard remain mock-backed for now. The
-  `/approvals` queue is DB-backed for managers and now supports approve/reject; HR sees an explicit
-  override-boundary state.
+- `/requests`, `/requests/[id]`, and the role-aware dashboard are DB-backed. The `/approvals` queue
+  is DB-backed for managers and now supports approve/reject; HR sees an explicit override-boundary
+  state.
 
 ## Approve/reject decisions (TASK-014)
 
@@ -300,7 +300,8 @@ fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed fo
   ledger row yet.
 - **Periods are UTC month starts** (`YYYY-MM-01`); `lib/domain/accrual.ts` owns the conversion.
 - Unpaid and any other `tracks_balance = false` type is skipped, as is a policy with a zero rate.
-- The dashboard, `/settings/policies`, and `/audit` accrual stats remain mock (`accrualSummary`).
+- The dashboard and `/audit` read accrual status from `accrual_ledger` via `getAccrualSummary()`.
+  `/settings/policies` policy rows remain mock until the policy-admin task.
 
 ## Project structure
 
@@ -345,8 +346,8 @@ proxy.ts                 Next 16 route guard (not middleware.ts)
   non-public route. The mock `mock-*` cookies and role selector are removed. Server components read
   the session with `getSession()`, which maps the verified email to the DB `users` row.
 - **Split data.** `GET`/`POST /api/leave-requests`, the decision route, `/requests/new`, `/balance`,
-  `/audit`, and the manager `/approvals` queue use Postgres. The dashboard, request list/detail, and
-  policy pages still read `lib/mock/data.ts`.
+  `/requests`, `/requests/[id]`, the dashboard, and the manager `/approvals` queue use Postgres.
+  Only the `/settings/policies` policy rows still read `lib/mock/data.ts`.
 - **Route handlers.** `/api/health`, `GET`/`POST /api/leave-requests`,
   `POST /api/leave-requests/:id/decision`, `GET /api/audit/:userId`,
   `GET`/`POST /api/jobs/accrual`, and `GET /auth/callback`.
