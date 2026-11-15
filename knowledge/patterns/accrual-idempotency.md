@@ -85,3 +85,26 @@ where user_id = $1 and leave_type_id = $2
 
 See `db/migrations/0002_accrual_ledger.sql`, `lib/db/accrual.ts`, and
 `tests/leave-accrual.integration.test.ts`.
+
+## Org-level accrual status
+
+A dashboard summary needs one row, not one per user:
+
+```sql
+select
+  max(period)::text as last_period,
+  max(created_at) as last_run_at,
+  (count(distinct user_id) filter (
+    where period = (select max(period) from accrual_ledger)
+  ))::int as people_processed
+from accrual_ledger
+```
+
+- `lastPeriod` and `lastRunAt` answer different questions: the month that was accrued versus when
+  the job ran. Keep both, and never derive one from the other.
+- `nextRunAt` is `lastPeriod + 1 month`, **not** `lastRunAt + 1 month`. A late run for November
+  still means December is next; using `created_at` would schedule 30 days after a delayed run.
+- `peopleProcessed` counts users in the latest period only, so it drops if someone leaves or loses
+  a tracked policy instead of freezing the first run's headcount.
+- With an empty ledger return `{ lastPeriod: null, lastRunAt: null, nextRunAt: null,
+peopleProcessed: 0 }` and render "No accrual has run yet" / "—". Never substitute `new Date()`.

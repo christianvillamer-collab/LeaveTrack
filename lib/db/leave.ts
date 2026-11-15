@@ -242,6 +242,7 @@ export async function listMyLeaveRequests(userId: string): Promise<MyLeaveReques
 
   return rows.map((row) => ({
     id: row.id,
+    reference: formatRequestReference(row.id),
     leaveType: toLeaveType({
       id: row.leave_type_id,
       name: row.leave_type_name,
@@ -426,6 +427,7 @@ export async function listTeamLeaveRequests(managerId: string): Promise<TeamLeav
 
   return rows.map((row) => ({
     id: row.id,
+    reference: formatRequestReference(row.id),
     employee: {
       id: row.employee_id,
       name: row.employee_name,

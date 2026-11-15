@@ -137,7 +137,7 @@ function toAuditEvent(row: AuditEventRow): AuditEvent {
 export async function getAuditReport(userId: string): Promise<AuditReport | null> {
   const db = getDb();
 
-  const [employees, requestRows, eventRows] = await Promise.all([
+  const [employees, requestRows, events] = await Promise.all([
     db<EmployeeRow[]>`
       select id, name, email, role
       from users
@@ -166,27 +166,7 @@ export async function getAuditReport(userId: string): Promise<AuditReport | null
         and r.is_deleted = false
       order by r.created_at desc
     `,
-    db<AuditEventRow[]>`
-      select
-        a.id,
-        a.leave_request_id as request_id,
-        a.action,
-        coalesce(a.detail, '') as detail,
-        a.occurred_at,
-        e.id as employee_id,
-        e.name as employee_name,
-        e.email as employee_email,
-        ac.id as actor_id,
-        ac.name as actor_name,
-        ac.email as actor_email
-      from audit_log a
-      join leave_requests r on r.id = a.leave_request_id
-      join users e on e.id = r.user_id
-      join users ac on ac.id = a.actor_id
-      where r.user_id = ${userId}
-        and r.is_deleted = false
-      order by a.occurred_at desc
-    `,
+    listAuditEventsForEmployee(userId),
   ]);
 
   const employee = employees[0];
@@ -198,8 +178,81 @@ export async function getAuditReport(userId: string): Promise<AuditReport | null
   return {
     employee: toEmployee(employee),
     requests: requestRows.map(toReportRequest),
-    events: eventRows.map(toAuditEvent),
+    events,
   };
+}
+
+/**
+ * One employee's audit timeline, newest first. `limit` is optional; the
+ * dashboard asks for a preview while the audit report reads the full history.
+ */
+export async function listAuditEventsForEmployee(
+  userId: string,
+  limit?: number,
+): Promise<AuditEvent[]> {
+  const rows = await getDb()<AuditEventRow[]>`
+    select
+      a.id,
+      a.leave_request_id as request_id,
+      a.action,
+      coalesce(a.detail, '') as detail,
+      a.occurred_at,
+      e.id as employee_id,
+      e.name as employee_name,
+      e.email as employee_email,
+      ac.id as actor_id,
+      ac.name as actor_name,
+      ac.email as actor_email
+    from audit_log a
+    join leave_requests r on r.id = a.leave_request_id
+    join users e on e.id = r.user_id
+    join users ac on ac.id = a.actor_id
+    where r.user_id = ${userId}
+      and r.is_deleted = false
+    order by a.occurred_at desc
+    limit ${limit ?? null}
+  `;
+
+  return rows.map(toAuditEvent);
+}
+
+/**
+ * Org-wide audit volume and recent history for the HR dashboard. HR is the only
+ * role that reads these; the policy gate lives on the page.
+ */
+export async function countAuditEvents(): Promise<number> {
+  const rows = await getDb()<{ count: number }[]>`
+    select count(*)::int as count
+    from audit_log
+  `;
+
+  return Number(rows[0]?.count ?? 0);
+}
+
+export async function listRecentAuditEvents(limit: number): Promise<AuditEvent[]> {
+  const rows = await getDb()<AuditEventRow[]>`
+    select
+      a.id,
+      a.leave_request_id as request_id,
+      a.action,
+      coalesce(a.detail, '') as detail,
+      a.occurred_at,
+      e.id as employee_id,
+      e.name as employee_name,
+      e.email as employee_email,
+      ac.id as actor_id,
+      ac.name as actor_name,
+      ac.email as actor_email
+    from audit_log a
+    join leave_requests r on r.id = a.leave_request_id
+    join users e on e.id = r.user_id
+    join users ac on ac.id = a.actor_id
+    where r.is_deleted = false
+    order by a.occurred_at desc
+    limit ${limit}
+  `;
+
+  return rows.map(toAuditEvent);
 }
 
 /**
