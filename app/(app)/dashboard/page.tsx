@@ -626,12 +626,17 @@ function HrDashboard({ data }: { data: HrViewData }) {
       </div>
 
       <Card>
-        <CardHeader className="flex-row items-center justify-between gap-3">
+        <CardHeader className="flex-row flex-wrap items-center justify-between gap-3">
           <div>
             <CardTitle>Requests needing a decision</CardTitle>
             <CardDescription>HR override view across all teams.</CardDescription>
           </div>
-          <Badge variant="warning">{org.pendingCount} pending</Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="warning">{org.pendingCount} pending</Badge>
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/approvals">Open override queue</Link>
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           <RequestTable

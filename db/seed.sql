@@ -21,13 +21,16 @@ insert into users (id, name, email, role, manager_id) values
 on conflict (id) do nothing;
 
 -- Vacation and Sick accrue; Unpaid deliberately has no policy row (BR-07).
-insert into leave_policies (user_id, leave_type_id, accrual_per_month)
+-- Seeded rates are effective from 2000-01-01 so they apply to every period
+-- until HR records a newer effective-dated row.
+insert into leave_policies (user_id, leave_type_id, accrual_per_month, effective_from)
 select u.id, t.id,
-  case t.name when 'Vacation' then 1.25 else 1.00 end
+  case t.name when 'Vacation' then 1.25 else 1.00 end,
+  date '2000-01-01'
 from users u
 cross join leave_types t
 where t.tracks_balance = true
-on conflict (user_id, leave_type_id) do nothing;
+on conflict (user_id, leave_type_id, effective_from) do nothing;
 
 insert into leave_balances (user_id, leave_type_id, balance)
 select u.id, t.id,

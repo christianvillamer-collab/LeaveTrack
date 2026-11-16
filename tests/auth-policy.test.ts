@@ -5,6 +5,8 @@ import {
   canDecideRequest,
   canDecideTeamRequests,
   canManageRequests,
+  canOverrideRequest,
+  canOverrideRequests,
   canRunAudit,
   canViewRequest,
   canViewTeam,
@@ -106,7 +108,38 @@ describe("canDecideRequest", () => {
   });
 });
 
+describe("canOverrideRequest", () => {
+  it("lets HR override another employee's pending request", () => {
+    expect(canOverrideRequest(hr, directReportRequest)).toBe(true);
+    expect(canOverrideRequest(hr, otherTeamRequest)).toBe(true);
+    expect(canOverrideRequest(hr, unmanagedRequest)).toBe(true);
+  });
+
+  it("stops HR overriding their own request", () => {
+    expect(
+      canOverrideRequest(hr, { ownerId: "hr-1", ownerManagerId: "manager-1", status: "pending" }),
+    ).toBe(false);
+  });
+
+  it("rejects a request that is no longer pending", () => {
+    expect(canOverrideRequest(hr, { ...otherTeamRequest, status: "approved" })).toBe(false);
+    expect(canOverrideRequest(hr, { ...otherTeamRequest, status: "rejected" })).toBe(false);
+  });
+
+  it("stops managers and employees from using the override path", () => {
+    expect(canOverrideRequest(manager, otherTeamRequest)).toBe(false);
+    expect(canOverrideRequest(manager, directReportRequest)).toBe(false);
+    expect(canOverrideRequest(employee, ownRequest)).toBe(false);
+  });
+});
+
 describe("action gates", () => {
+  it("limits the override endpoint to HR", () => {
+    expect(canOverrideRequests(hr)).toBe(true);
+    expect(canOverrideRequests(manager)).toBe(false);
+    expect(canOverrideRequests(employee)).toBe(false);
+  });
+
   it("limits the team queue to managers", () => {
     expect(canViewTeam(manager)).toBe(true);
     expect(canViewTeam(employee)).toBe(false);
@@ -140,6 +173,8 @@ describe("action gates", () => {
   it("accepts a bare role string for role-only gates", () => {
     expect(canViewTeam("manager")).toBe(true);
     expect(canDecideTeamRequests("manager")).toBe(true);
+    expect(canOverrideRequests("hr_admin")).toBe(true);
+    expect(canOverrideRequests("manager")).toBe(false);
     expect(canManageRequests("hr_admin")).toBe(true);
     expect(canRunAudit("hr_admin")).toBe(true);
     expect(canConfigurePolicies("hr_admin")).toBe(true);

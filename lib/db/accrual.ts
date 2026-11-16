@@ -70,16 +70,25 @@ export async function runAccrual(period: string): Promise<AccrualResult> {
   }
 
   const rows = await getDb()<AccrualResultRow[]>`
-    with eligible as (
-      select
+    with effective as (
+      select distinct on (p.user_id, p.leave_type_id)
         p.user_id,
         p.leave_type_id,
         p.accrual_per_month as days
       from leave_policies p
+      where p.effective_from <= ${period}::date
+      order by p.user_id, p.leave_type_id, p.effective_from desc
+    ),
+    eligible as (
+      select
+        e.user_id,
+        e.leave_type_id,
+        e.days
+      from effective e
       join leave_types t
-        on t.id = p.leave_type_id
+        on t.id = e.leave_type_id
        and t.tracks_balance = true
-      where p.accrual_per_month > 0
+      where e.days > 0
     ),
     recorded as (
       insert into accrual_ledger (user_id, leave_type_id, period, days)

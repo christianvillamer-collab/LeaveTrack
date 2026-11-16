@@ -60,25 +60,33 @@ Ship **both** layers in `db/migrations/0003_db_authorization.sql`, and document 
 
 ### Grant matrix (`leavetrack_app`)
 
-| Table            | SELECT | INSERT | UPDATE | DELETE | Rationale                                         |
-| ---------------- | :----: | :----: | :----: | :----: | ------------------------------------------------- |
-| `users`          |   ✅   |   ❌   |   ❌   |   ❌   | Identity lookup only                              |
-| `leave_types`    |   ✅   |   ❌   |   ❌   |   ❌   | Seeded reference data                             |
-| `leave_policies` |   ✅   |   ❌   |   ❌   |   ❌   | Policy reads; admin writes are future server work |
-| `leave_balances` |   ✅   |   ✅   |   ✅   |   ❌   | Accrual upsert + approve decrement                |
-| `leave_requests` |   ✅   |   ✅   |   ✅   |   ❌   | Submit, decide, soft delete (`is_deleted`)        |
-| `audit_log`      |   ✅   |   ✅   |   ❌   |   ❌   | Append-only; update/delete blocked by trigger too |
-| `accrual_ledger` |   ✅   |   ✅   |   ❌   |   ❌   | Idempotent insert; ledger is append-only          |
+| Table              | SELECT | INSERT | UPDATE | DELETE | Rationale                                         |
+| ------------------ | :----: | :----: | :----: | :----: | ------------------------------------------------- |
+| `users`            |   ✅   |   ❌   |   ❌   |   ❌   | Identity lookup only                              |
+| `leave_types`      |   ✅   |   ❌   |   ❌   |   ❌   | Seeded reference data                             |
+| `leave_policies`   |   ✅   |   ✅   |   ✅   |   ❌   | Effective-dated rate rows; see amendment below    |
+| `leave_balances`   |   ✅   |   ✅   |   ✅   |   ❌   | Accrual upsert + approve decrement                |
+| `leave_requests`   |   ✅   |   ✅   |   ✅   |   ❌   | Submit, decide, soft delete (`is_deleted`)        |
+| `audit_log`        |   ✅   |   ✅   |   ❌   |   ❌   | Append-only; update/delete blocked by trigger too |
+| `accrual_ledger`   |   ✅   |   ✅   |   ❌   |   ❌   | Idempotent insert; ledger is append-only          |
+| `policy_audit_log` |   ✅   |   ✅   |   ❌   |   ❌   | Append-only policy changes; see amendment below   |
+
+**Amended by E2-08 (`ADR-LeaveTrack-E006`).** This ADR was written when E2-04 shipped, and its
+matrix originally withheld `INSERT/UPDATE` on `leave_policies` ("admin writes are future server
+work"). E2-08 implemented that work: the app role now holds `INSERT/UPDATE` on `leave_policies`
+(no `DELETE`), and `policy_audit_log` was added with `SELECT/INSERT` only. The matrix rows above are
+annotated with the current posture; the decision itself (deny-by-default + least-privilege role) is
+unchanged, now across eight tables.
 
 No `TRUNCATE`, `REFERENCES`, `TRIGGER`, or DDL is granted. `DELETE` is withheld everywhere; the `prevent_hard_delete` triggers remain the second layer.
 
-`anon` and `authenticated` are revoked on all seven tables plus `schema_migrations`, and `ALTER DEFAULT PRIVILEGES … REVOKE ALL ON TABLES/SEQUENCES FROM anon, authenticated` (executed as the migrating owner) prevents future tables created by that role from inheriting PostgREST access. Tables created by a _different_ role (another migration user, `supabase_admin`, dashboard tooling) are not covered by that default and rely on RLS as the backstop — see "Residual risk" below.
+`anon` and `authenticated` are revoked on all eight tables plus `schema_migrations`, and `ALTER DEFAULT PRIVILEGES … REVOKE ALL ON TABLES/SEQUENCES FROM anon, authenticated` (executed as the migrating owner) prevents future tables created by that role from inheriting PostgREST access. Tables created by a _different_ role (another migration user, `supabase_admin`, dashboard tooling) are not covered by that default and rely on RLS as the backstop — see "Residual risk" below.
 
 `EXECUTE` on the three application functions (`set_updated_at`, `prevent_hard_delete`, `prevent_audit_update`) is revoked from `PUBLIC`, `anon`, and `authenticated`, and defaults for future functions are revoked for the two client roles. Triggers check `EXECUTE` when the trigger is created, not when it fires, so the client roles lose nothing.
 
 ### RLS
 
-- `ENABLE ROW LEVEL SECURITY` on all seven tables.
+- `ENABLE ROW LEVEL SECURITY` on all eight tables.
 - `<table>_app_access` — `FOR ALL TO leavetrack_app USING (true) WITH CHECK (true)`. Explicit allow, auditable in `pg_policies`.
 - `<table>_deny_clients` — `AS RESTRICTIVE FOR ALL TO anon, authenticated USING (false) WITH CHECK (false)`. Explicit deny, not an implicit missing policy. It is **restrictive** because PostgreSQL ORs permissive policies: a future re-grant plus a Supabase-style `USING (id = auth.uid())` allow policy would silently defeat a permissive deny, while a restrictive policy is AND'd and always wins.
 

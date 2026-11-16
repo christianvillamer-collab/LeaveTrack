@@ -97,6 +97,20 @@ export interface Policy {
   assignedEmployees: number;
 }
 
+/** One effective-dated rate: the rate for a month and every month after it. */
+export interface PolicyRate {
+  userId: string;
+  leaveTypeId: string;
+  accrualPerMonth: number;
+  effectiveFrom: string;
+}
+
+/** Result of an HR policy upsert; `auditWritten` is false for a no-op save. */
+export interface PolicyRateResult extends PolicyRate {
+  previousRate: number | null;
+  auditWritten: boolean;
+}
+
 /**
  * Identity columns the database actually stores for a user. `Employee` carries
  * presentation-only fields (job title, team) that have no column yet, so audit
@@ -126,6 +140,18 @@ export interface AuditReportRequest {
   createdAt: string;
   decidedAt: string | null;
   decidedBy: AuditEventPerson | null;
+}
+
+/** One append-only row of `policy_audit_log`, joined for display. */
+export interface PolicyChange {
+  id: string;
+  employee: AuditEventPerson;
+  leaveType: LeaveType;
+  effectiveFrom: string;
+  previousRate: number | null;
+  newRate: number;
+  actor: AuditEventPerson;
+  changedAt: string;
 }
 
 export interface AuditReportEmployee extends AuditEventPerson {

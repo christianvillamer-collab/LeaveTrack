@@ -48,6 +48,10 @@ Why this shape:
   on the next run, and concurrent triggers are safe.
 - Numeric columns only; never add accrual in JavaScript floats.
 
+The `days` value itself is resolved per month, not read from a single mutable row: a rate
+change must affect only later periods. The ledger makes the run idempotent; effective dating
+makes it correct. See `knowledge/patterns/effective-dated-policy.md`.
+
 ## Reading "last accrual" back
 
 The same reasoning applies to the read side. `lastAccruedAt` must come from the

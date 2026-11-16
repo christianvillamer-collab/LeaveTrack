@@ -123,6 +123,14 @@ export interface DecideLeaveRequestInput {
   reason?: string;
 }
 
+export interface OverrideLeaveRequestInput {
+  requestId: string;
+  actorId: string;
+  actorName: string;
+  decision: "approved" | "rejected";
+  reason: string;
+}
+
 function isLeaveTypeName(name: string): name is LeaveType["name"] {
   return name === "Vacation" || name === "Sick" || name === "Unpaid";
 }
@@ -181,8 +189,15 @@ export async function getBalancesForUser(userId: string): Promise<LeaveBalance[]
     from leave_types lt
     left join leave_balances lb
       on lb.leave_type_id = lt.id and lb.user_id = ${userId}
-    left join leave_policies lp
-      on lp.leave_type_id = lt.id and lp.user_id = ${userId}
+    left join lateral (
+      select p.accrual_per_month
+      from leave_policies p
+      where p.user_id = ${userId}
+        and p.leave_type_id = lt.id
+        and p.effective_from <= (now() at time zone 'utc')::date
+      order by p.effective_from desc
+      limit 1
+    ) lp on true
     left join (
       select
         leave_type_id,
@@ -397,6 +412,29 @@ export async function getLeaveRequestDetail(requestId: string): Promise<LeaveReq
   };
 }
 
+function toTeamLeaveRequest(row: TeamLeaveRequestRow): TeamLeaveRequest {
+  return {
+    id: row.id,
+    reference: formatRequestReference(row.id),
+    employee: {
+      id: row.employee_id,
+      name: row.employee_name,
+      email: row.employee_email,
+    },
+    leaveType: toLeaveType({
+      id: row.leave_type_id,
+      name: row.leave_type_name,
+      tracks_balance: row.tracks_balance,
+    }),
+    startDate: row.start_date,
+    endDate: row.end_date,
+    days: Number(row.days),
+    reason: row.reason,
+    status: toRequestStatus(row.status),
+    createdAt: row.created_at.toISOString(),
+  };
+}
+
 /**
  * The direct-report predicate is intentionally in SQL. Never fetch the team
  * and filter by manager in application code.
@@ -425,26 +463,38 @@ export async function listTeamLeaveRequests(managerId: string): Promise<TeamLeav
     order by r.created_at desc
   `;
 
-  return rows.map((row) => ({
-    id: row.id,
-    reference: formatRequestReference(row.id),
-    employee: {
-      id: row.employee_id,
-      name: row.employee_name,
-      email: row.employee_email,
-    },
-    leaveType: toLeaveType({
-      id: row.leave_type_id,
-      name: row.leave_type_name,
-      tracks_balance: row.tracks_balance,
-    }),
-    startDate: row.start_date,
-    endDate: row.end_date,
-    days: Number(row.days),
-    reason: row.reason,
-    status: toRequestStatus(row.status),
-    createdAt: row.created_at.toISOString(),
-  }));
+  return rows.map(toTeamLeaveRequest);
+}
+
+/**
+ * HR-only cross-team queue. This is deliberately a separate query: the manager
+ * path keeps its `e.manager_id = :current_user_id` predicate, and HR never
+ * passes through `scope=team`.
+ */
+export async function listOrgLeaveRequests(): Promise<TeamLeaveRequest[]> {
+  const rows = await getDb()<TeamLeaveRequestRow[]>`
+    select
+      r.id,
+      r.start_date::text as start_date,
+      r.end_date::text as end_date,
+      (r.end_date - r.start_date + 1)::int as days,
+      r.reason,
+      r.status::text as status,
+      r.created_at,
+      e.id as employee_id,
+      e.name as employee_name,
+      e.email as employee_email,
+      lt.id as leave_type_id,
+      lt.name as leave_type_name,
+      lt.tracks_balance
+    from leave_requests r
+    join users e on e.id = r.user_id
+    join leave_types lt on lt.id = r.leave_type_id
+    where r.is_deleted = false
+    order by r.created_at desc
+  `;
+
+  return rows.map(toTeamLeaveRequest);
 }
 
 export async function getTeamLeaveData(managerId: string): Promise<TeamLeaveData> {
@@ -456,18 +506,26 @@ export async function getTeamLeaveData(managerId: string): Promise<TeamLeaveData
   return { requests, directReports };
 }
 
-export async function decideLeaveRequest(
-  input: DecideLeaveRequestInput,
-): Promise<LeaveDecisionResult> {
-  const note = input.reason?.trim() || null;
+interface ApplyDecisionOptions {
+  requestId: string;
+  actorId: string;
+  actorName: string;
+  decision: "approved" | "rejected";
+  note: string | null;
+  isOverride: boolean;
+  /** Relationship-specific gate; runs after the row lock, before status checks. */
+  authorize: (row: DecisionRow) => void;
+}
 
-  if (input.decision === "rejected" && !note) {
-    throw AppError.validation("A rejection reason is required.");
-  }
+/**
+ * One transactional decision path for managers and HR overrides. The lock →
+ * relationship gate → pending check → balance decrement → status update →
+ * audit insert sequence must not fork, or the two modes drift apart.
+ */
+async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisionResult> {
+  const { requestId, actorId, actorName, decision, note, isOverride, authorize } = options;
 
-  const db = getDb();
-
-  return db.begin(async (tx) => {
+  return getDb().begin(async (tx) => {
     const [row] = await tx<DecisionRow[]>`
       select
         r.id,
@@ -481,7 +539,7 @@ export async function decideLeaveRequest(
       from leave_requests r
       join users e on e.id = r.user_id
       join leave_types lt on lt.id = r.leave_type_id
-      where r.id = ${input.requestId}
+      where r.id = ${requestId}
         and r.is_deleted = false
       for update
     `;
@@ -490,9 +548,7 @@ export async function decideLeaveRequest(
       throw AppError.notFound("Leave request not found.");
     }
 
-    if (row.manager_id !== input.managerId) {
-      throw AppError.forbidden("You can only decide requests from your direct reports.");
-    }
+    authorize(row);
 
     if (row.status !== "pending") {
       throw new AppError(ERROR_CODES.CONFLICT, "This request has already been decided.", 409);
@@ -506,7 +562,7 @@ export async function decideLeaveRequest(
     const days = Number(row.days);
     let balance: LeaveDecisionResult["balance"] = null;
 
-    if (input.decision === "approved" && leaveType.tracksBalance) {
+    if (decision === "approved" && leaveType.tracksBalance) {
       const [balanceRow] = await tx<{ balance: string }[]>`
         select balance
         from leave_balances
@@ -520,7 +576,7 @@ export async function decideLeaveRequest(
       if (!balanceRow || previous < days) {
         throw new AppError(
           ERROR_CODES.CONFLICT,
-          "The employee's confirmed balance is lower than the requested days. HR override is required.",
+          "The employee's confirmed balance is lower than the requested days, so this request cannot be approved.",
           409,
         );
       }
@@ -546,19 +602,24 @@ export async function decideLeaveRequest(
 
     await tx`
       update leave_requests
-      set status = ${input.decision}::request_status,
-          decided_by = ${input.managerId},
+      set status = ${decision}::request_status,
+          decided_by = ${actorId},
           decided_at = ${decidedAt},
           decision_note = ${note}
-      where id = ${input.requestId}
+      where id = ${requestId}
     `;
 
-    const detail =
-      input.decision === "approved"
+    const detail = isOverride
+      ? decision === "approved"
         ? balance
-          ? `Approved by ${input.managerName}. ${leaveType.name} balance reduced by ${formatDays(days)} (${balance.previous} → ${balance.next}).`
-          : `Approved by ${input.managerName}. No balance change.`
-        : `Rejected by ${input.managerName}: ${note}. No balance change.`;
+          ? `HR override — approved by ${actorName}: ${note}. ${leaveType.name} balance reduced by ${formatDays(days)} (${balance.previous} → ${balance.next}).`
+          : `HR override — approved by ${actorName}: ${note}. No balance change.`
+        : `HR override — rejected by ${actorName}: ${note}. No balance change.`
+      : decision === "approved"
+        ? balance
+          ? `Approved by ${actorName}. ${leaveType.name} balance reduced by ${formatDays(days)} (${balance.previous} → ${balance.next}).`
+          : `Approved by ${actorName}. No balance change.`
+        : `Rejected by ${actorName}: ${note}. No balance change.`;
 
     await tx`
       insert into audit_log (
@@ -567,9 +628,9 @@ export async function decideLeaveRequest(
         action,
         detail
       ) values (
-        ${input.requestId},
-        ${input.managerId},
-        ${input.decision},
+        ${requestId},
+        ${actorId},
+        ${decision},
         ${detail}
       )
     `;
@@ -577,11 +638,63 @@ export async function decideLeaveRequest(
     return {
       request: {
         id: row.id,
-        status: input.decision,
+        status: decision,
         decidedAt: decidedAt.toISOString(),
       },
       balance,
     };
+  });
+}
+
+export async function decideLeaveRequest(
+  input: DecideLeaveRequestInput,
+): Promise<LeaveDecisionResult> {
+  const note = input.reason?.trim() || null;
+
+  if (input.decision === "rejected" && !note) {
+    throw AppError.validation("A rejection reason is required.");
+  }
+
+  return applyDecision({
+    requestId: input.requestId,
+    actorId: input.managerId,
+    actorName: input.managerName,
+    decision: input.decision,
+    note,
+    isOverride: false,
+    authorize: (row) => {
+      if (row.manager_id !== input.managerId) {
+        throw AppError.forbidden("You can only decide requests from your direct reports.");
+      }
+    },
+  });
+}
+
+/**
+ * HR cross-team override. This bypasses the direct-manager relationship, never
+ * the pending/duplicate or over-balance guards, and always requires a reason.
+ */
+export async function overrideLeaveRequest(
+  input: OverrideLeaveRequestInput,
+): Promise<LeaveDecisionResult> {
+  const note = input.reason.trim();
+
+  if (!note) {
+    throw AppError.validation("An override reason is required.");
+  }
+
+  return applyDecision({
+    requestId: input.requestId,
+    actorId: input.actorId,
+    actorName: input.actorName,
+    decision: input.decision,
+    note,
+    isOverride: true,
+    authorize: (row) => {
+      if (row.user_id === input.actorId) {
+        throw AppError.forbidden("You cannot override a decision on your own request.");
+      }
+    },
   });
 }
 

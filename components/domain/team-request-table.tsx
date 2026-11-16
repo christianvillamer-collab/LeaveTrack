@@ -21,6 +21,14 @@ export interface TeamRequestTableProps {
   emptyTitle?: string;
   emptyDescription?: string;
   actionable?: boolean;
+  /** HR cross-team mode; forwarded to `TeamDecisionActions`. */
+  override?: boolean;
+  /**
+   * Optional per-row gate for the action buttons. HR uses `canOverrideRequest`
+   * here so the queue and `/requests/[id]` agree that HR cannot act on their
+   * own request; the server enforces the same rule.
+   */
+  canActOn?: (request: TeamLeaveRequest) => boolean;
   variant?: "table" | "cards";
 }
 
@@ -29,11 +37,16 @@ export function TeamRequestTable({
   emptyTitle = "No requests in your scope",
   emptyDescription = "Requests from your direct reports will appear here.",
   actionable = false,
+  override = false,
+  canActOn,
   variant = "table",
 }: TeamRequestTableProps) {
   if (requests.length === 0) {
     return <EmptyState icon={Inbox} title={emptyTitle} description={emptyDescription} />;
   }
+
+  const showsActions = (request: TeamLeaveRequest) =>
+    actionable && request.status === "pending" && (canActOn?.(request) ?? true);
 
   const cards = (
     <ul className={variant === "cards" ? "space-y-3" : "space-y-3 xl:hidden"}>
@@ -63,9 +76,9 @@ export function TeamRequestTable({
           <p className="text-muted-foreground text-caption mt-2">
             Submitted {formatDate(request.createdAt)}
           </p>
-          {actionable && request.status === "pending" ? (
+          {showsActions(request) ? (
             <div className="mt-3">
-              <TeamDecisionActions request={request} />
+              <TeamDecisionActions request={request} override={override} />
             </div>
           ) : null}
         </li>
@@ -127,8 +140,8 @@ export function TeamRequestTable({
                 </TableCell>
                 {actionable ? (
                   <TableCell>
-                    {request.status === "pending" ? (
-                      <TeamDecisionActions request={request} />
+                    {showsActions(request) ? (
+                      <TeamDecisionActions request={request} override={override} />
                     ) : (
                       <span className="text-muted-foreground text-caption">—</span>
                     )}

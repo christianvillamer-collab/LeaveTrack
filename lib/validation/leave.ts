@@ -47,3 +47,22 @@ export const decisionInputSchema = z
   });
 
 export type DecisionInput = z.infer<typeof decisionInputSchema>;
+
+/**
+ * HR cross-team override. The explicit `override: true` flag is what makes the
+ * action auditable as an override, and a reason is required for approvals and
+ * rejections alike.
+ */
+export const overrideInputSchema = z
+  .object({
+    override: z.literal(true),
+    decision: z.enum(["approved", "rejected"]),
+    reason: z
+      .string()
+      .trim()
+      .min(3, "Give a short reason for the override.")
+      .max(2000, "Reason must be 2,000 characters or fewer."),
+  })
+  .strict();
+
+export type OverrideInput = z.infer<typeof overrideInputSchema>;

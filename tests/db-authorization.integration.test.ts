@@ -15,6 +15,7 @@ const TABLES = [
   "leave_requests",
   "audit_log",
   "accrual_ledger",
+  "policy_audit_log",
 ] as const;
 
 type Table = (typeof TABLES)[number];
@@ -24,11 +25,12 @@ type Privilege = "SELECT" | "INSERT" | "UPDATE" | "DELETE";
 const EXPECTED: Record<Table, Record<Privilege, boolean>> = {
   users: { SELECT: true, INSERT: false, UPDATE: false, DELETE: false },
   leave_types: { SELECT: true, INSERT: false, UPDATE: false, DELETE: false },
-  leave_policies: { SELECT: true, INSERT: false, UPDATE: false, DELETE: false },
+  leave_policies: { SELECT: true, INSERT: true, UPDATE: true, DELETE: false },
   leave_balances: { SELECT: true, INSERT: true, UPDATE: true, DELETE: false },
   leave_requests: { SELECT: true, INSERT: true, UPDATE: true, DELETE: false },
   audit_log: { SELECT: true, INSERT: true, UPDATE: false, DELETE: false },
   accrual_ledger: { SELECT: true, INSERT: true, UPDATE: false, DELETE: false },
+  policy_audit_log: { SELECT: true, INSERT: true, UPDATE: false, DELETE: false },
 };
 
 const CLIENT_ROLES = ["anon", "authenticated"] as const;

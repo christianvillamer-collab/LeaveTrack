@@ -60,6 +60,28 @@ export function canDecideRequest(actor: Actor, scope: RequestScope): boolean {
   return isDirectReport(actor, scope.ownerManagerId);
 }
 
+/**
+ * Role gate for the HR cross-team override endpoint. The record-level rules
+ * (pending only, never your own request) live in `canOverrideRequest` and in
+ * the transactional SQL, exactly like the manager path.
+ */
+export function canOverrideRequests(subject: Subject): boolean {
+  return roleOf(subject) === "hr_admin";
+}
+
+/**
+ * HR may override a decision only while it is pending and never on their own
+ * request. Managers and employees never pass, and this does not widen
+ * `scope=team` or `canDecideTeamRequests`.
+ */
+export function canOverrideRequest(actor: Actor, scope: RequestScope): boolean {
+  if (actor.role !== "hr_admin" || scope.status !== "pending") {
+    return false;
+  }
+
+  return actor.id !== scope.ownerId;
+}
+
 /** `scope=team` is manager-only; HR uses the explicit override boundary. */
 export function canViewTeam(subject: Subject): boolean {
   return roleOf(subject) === "manager";

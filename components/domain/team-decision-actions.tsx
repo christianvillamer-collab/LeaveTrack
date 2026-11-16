@@ -14,6 +14,8 @@ import { formatDateRange, formatDays } from "@/lib/utils/format";
 
 export interface TeamDecisionActionsProps {
   request: TeamLeaveRequest;
+  /** HR cross-team mode: explicit flag, mandatory reason, separate endpoint. */
+  override?: boolean;
 }
 
 type Decision = "approved" | "rejected";
@@ -30,7 +32,7 @@ function getApiErrorMessage(payload: unknown): string | null {
   return typeof payload.error.message === "string" ? payload.error.message : null;
 }
 
-export function TeamDecisionActions({ request }: TeamDecisionActionsProps) {
+export function TeamDecisionActions({ request, override = false }: TeamDecisionActionsProps) {
   const router = useRouter();
   const [decision, setDecision] = useState<Decision | null>(null);
   const [reason, setReason] = useState("");
@@ -61,8 +63,12 @@ export function TeamDecisionActions({ request }: TeamDecisionActionsProps) {
       return;
     }
 
-    if (decision === "rejected" && reason.trim().length < 3) {
-      setReasonError("Give the employee a short reason for the rejection.");
+    if ((override || decision === "rejected") && reason.trim().length < 3) {
+      setReasonError(
+        override
+          ? "Give a short reason for the override."
+          : "Give the employee a short reason for the rejection.",
+      );
       return;
     }
 
@@ -71,18 +77,27 @@ export function TeamDecisionActions({ request }: TeamDecisionActionsProps) {
     setError(null);
 
     try {
-      const response = await fetch(`/api/leave-requests/${request.id}/decision`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          decision,
-          reason: reason.trim() || undefined,
-        }),
-      });
+      const response = await fetch(
+        `/api/leave-requests/${request.id}/${override ? "override" : "decision"}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            override
+              ? { override: true, decision, reason: reason.trim() }
+              : { decision, reason: reason.trim() || undefined },
+          ),
+        },
+      );
       const payload: unknown = await response.json().catch(() => null);
 
       if (!response.ok) {
-        setError(getApiErrorMessage(payload) ?? "The decision could not be recorded. Try again.");
+        setError(
+          getApiErrorMessage(payload) ??
+            (override
+              ? "The override could not be recorded. Try again."
+              : "The decision could not be recorded. Try again."),
+        );
         return;
       }
 
@@ -103,20 +118,20 @@ export function TeamDecisionActions({ request }: TeamDecisionActionsProps) {
           type="button"
           size="sm"
           onClick={() => openDecision("approved")}
-          aria-label={`Approve ${request.employee.name}'s ${request.leaveType.name} request`}
+          aria-label={`${override ? "Override approve" : "Approve"} ${request.employee.name}'s ${request.leaveType.name} request`}
         >
           <Check aria-hidden="true" />
-          Approve
+          {override ? "Override approve" : "Approve"}
         </Button>
         <Button
           type="button"
           size="sm"
           variant="secondary"
           onClick={() => openDecision("rejected")}
-          aria-label={`Reject ${request.employee.name}'s ${request.leaveType.name} request`}
+          aria-label={`${override ? "Override reject" : "Reject"} ${request.employee.name}'s ${request.leaveType.name} request`}
         >
           <X aria-hidden="true" />
-          Reject
+          {override ? "Override reject" : "Reject"}
         </Button>
       </div>
 
@@ -127,7 +142,15 @@ export function TeamDecisionActions({ request }: TeamDecisionActionsProps) {
             closeDecision();
           }
         }}
-        title={decision === "rejected" ? "Reject this request?" : "Approve this request?"}
+        title={
+          override
+            ? decision === "rejected"
+              ? "Override reject this request?"
+              : "Override approve this request?"
+            : decision === "rejected"
+              ? "Reject this request?"
+              : "Approve this request?"
+        }
         description={`${request.employee.name} · ${formatDateRange(request.startDate, request.endDate)} · ${formatDays(request.days)}`}
         footer={
           <>
@@ -141,7 +164,13 @@ export function TeamDecisionActions({ request }: TeamDecisionActionsProps) {
               loadingText="Saving…"
               onClick={confirmDecision}
             >
-              {decision === "rejected" ? "Confirm rejection" : "Confirm approval"}
+              {override
+                ? decision === "rejected"
+                  ? "Confirm override rejection"
+                  : "Confirm override approval"
+                : decision === "rejected"
+                  ? "Confirm rejection"
+                  : "Confirm approval"}
             </Button>
           </>
         }
@@ -151,11 +180,22 @@ export function TeamDecisionActions({ request }: TeamDecisionActionsProps) {
             {request.reason}
           </p>
 
-          {decision === "rejected" ? (
+          {override ? (
+            <Alert variant="warning" title="HR cross-team override">
+              This bypasses the direct-manager chain. The audit log records your name, the reason,
+              and any balance change.
+            </Alert>
+          ) : null}
+
+          {decision === "rejected" || override ? (
             <Field
               id="decision-reason"
-              label="Rejection reason"
-              hint="The employee and HR can see this."
+              label={override ? "Override reason" : "Rejection reason"}
+              hint={
+                override
+                  ? "Recorded in the audit log alongside the decision."
+                  : "The employee and HR can see this."
+              }
               error={reasonError ?? undefined}
               required
             >
@@ -173,13 +213,15 @@ export function TeamDecisionActions({ request }: TeamDecisionActionsProps) {
                 />
               )}
             </Field>
-          ) : (
+          ) : null}
+
+          {decision !== "rejected" ? (
             <Alert variant="info" title="Balance impact">
               {request.leaveType.tracksBalance
                 ? `Approving deducts ${formatDays(request.days)} from ${request.employee.name}'s ${request.leaveType.name} balance.`
                 : "Unpaid leave has no balance to deduct."}
             </Alert>
-          )}
+          ) : null}
 
           {error ? <Alert variant="danger">{error}</Alert> : null}
         </div>
