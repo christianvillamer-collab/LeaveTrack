@@ -45,8 +45,8 @@ accounts below (the password is `SEED_AUTH_PASSWORD`):
 
 - **Employee** — Maya Chen, own requests and balances
 - **Manager** — Daniel Okafor, approvals for five direct reports only
-- **HR Admin** — Priya Nair, audit log and policies; the approvals override is not part of
-  TASK-013
+- **HR Admin** — Priya Nair, audit log, org-wide approvals override queue, and effective-dated
+  policy administration
 
 ```bash
 npm run env:setup
@@ -174,8 +174,8 @@ creates the pending request; Unpaid leave never warns and no balance is deducted
 `users.manager_id` (the scoped queue itself is TASK-013). The response reports
 `managerNotified`. No email provider or notifications table is part of this task.
 
-Known temporary boundary: after submission, `/requests` and the manager dashboard still render mock
-fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed for managers.
+`/settings/policies` is DB-backed and read/write for HR. `/requests`, `/balance`, the dashboard,
+and the `/approvals` queue are also DB-backed.
 
 ## Balance API and page (TASK-012)
 
@@ -214,9 +214,9 @@ fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed fo
   accrual has run. Approving a request no longer moves it, and untracked types (Unpaid) are always
   `null`.
 - `/balance` uses the same `getMyLeaveData` service server-side; the GET route serves API clients.
-- `/requests`, `/requests/[id]`, and the manager dashboard remain mock-backed for now. The
-  `/approvals` queue is DB-backed for managers and now supports approve/reject; HR sees an explicit
-  override-boundary state.
+- `/requests`, `/requests/[id]`, and the role-aware dashboard are DB-backed. The `/approvals` queue
+  is DB-backed for managers and now supports approve/reject; HR gets a separate cross-team override
+  queue at `/approvals`.
 
 ## Approve/reject decisions (TASK-014)
 
@@ -236,13 +236,36 @@ fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed fo
   `decision_note` stores the reason, and a `rejected` audit row is written.
 - **403** — caller is not a manager or the request owner is not the caller’s direct report.
 - **404** — request does not exist or is soft-deleted.
-- **409** — already decided, or the employee’s confirmed balance is lower than the requested days
-  (HR override is required; the scaffold does not clamp balances).
+- **409** — already decided, or the employee’s confirmed balance is lower than the requested days.
+  Over-balance approval, including through the HR override path, is E2-11; the scaffold never clamps
+  a balance silently.
 - **Unpaid** — its leave type has `tracks_balance = false` (and no policy or balance rows are
   seeded), so submission skips the balance lookup entirely and approval succeeds with no balance
   change.
 - The queue buttons are manager-only; the history table stays read-only. Every action refreshes the
   queue and history.
+
+## HR cross-team override (E2-07)
+
+`POST /api/leave-requests/:id/override` is HR-only and accepts:
+
+```json
+{ "override": true, "decision": "approved", "reason": "Payroll reconciled the balance." }
+{ "override": true, "decision": "rejected", "reason": "Duplicate of an approved request." }
+```
+
+- The explicit `override: true` flag and a 3–2000 character reason are required for both decisions;
+  the schema is strict, so a missing flag, blank reason, or extra field is a 400.
+- HR can act on any pending request, but never their own (403). Pending/duplicate requests stay 409.
+- The override shares `decideLeaveRequest`'s transaction: approve decrements only the tracked balance,
+  `decided_by` is the HR actor, `decision_note` stores the reason, and an audit row is written with a
+  detail prefixed `HR override`. No schema change is needed; the distinct audit action is E2-11.
+- Over-balance approval still returns 409 for everyone in E2-07; E2-11 owns the negative-balance path.
+- HR reads the org-wide queue through `listOrgLeaveRequests()`. The manager queue's
+  `WHERE employee.manager_id = :current_user_id` predicate is unchanged, and `scope=team` still
+  returns 403 for HR.
+- `/approvals` shows HR the org-wide pending queue with override buttons; `/requests/[id]` shows an HR
+  override panel for pending requests that are not their own.
 
 ## HR audit report (TASK-015)
 
@@ -273,8 +296,8 @@ fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed fo
   and its audit history still exist in the table (no purge, no hard delete).
 - **404** — unknown or malformed `userId`. `requestReference` is derived from the request UUID
   (`LR-` + last eight hex characters) because `leave_requests` has no reference column.
-- The `/audit` page renders the same report for a selected employee; the last-accrual stat stays
-  mock data.
+- The `/audit` page renders the same report for a selected employee; its accrual stats come from
+  `getAccrualSummary()`.
 
 ## Monthly accrual (TASK-017)
 
@@ -300,7 +323,41 @@ fixtures until the remaining Day 1 tasks. The `/approvals` queue is DB-backed fo
   ledger row yet.
 - **Periods are UTC month starts** (`YYYY-MM-01`); `lib/domain/accrual.ts` owns the conversion.
 - Unpaid and any other `tracks_balance = false` type is skipped, as is a policy with a zero rate.
-- The dashboard, `/settings/policies`, and `/audit` accrual stats remain mock (`accrualSummary`).
+- **Effective-dated rates.** Each run resolves the latest `leave_policies` row whose
+  `effective_from` is on or before the run period, so a mid-year change affects only later months.
+  The ledger is never recalculated.
+- The dashboard and `/audit` read accrual status from `accrual_ledger` via `getAccrualSummary()`.
+  `/settings/policies` is DB-backed and read/write for HR.
+
+## Policy administration (E2-08)
+
+`POST /api/policies` is HR-only and upserts one effective-dated rate:
+
+```json
+{
+  "userId": "a0000000-0000-4000-8000-000000000004",
+  "leaveTypeId": "11111111-1111-4111-8111-111111111111",
+  "accrualPerMonth": 1.5,
+  "effectiveFrom": "2027-01-01"
+}
+```
+
+- **HR Admin only.** Employees and managers receive 403; unauthenticated requests receive 401.
+- `effectiveFrom` must be the first day of a month. Periods before the current UTC month are
+  rejected with 400; the current and future months are accepted. Once that month has already
+  accrued for the employee and leave type (an `accrual_ledger` row holds the period), a save for
+  it is rejected with 409 — the accrual job's idempotency marker means the new rate could never
+  apply. Pick the next month instead.
+- **Append-only periods.** A new month inserts a dated row. Correcting the current or a future month
+  updates that row. Earlier months stay untouched.
+- **One audit row per change.** A real insert or update writes exactly one `policy_audit_log` row
+  with the employee, leave type, effective month, previous rate, new rate, actor, and timestamp. A
+  same-month save with the same rate is a no-op and writes none.
+- `audit_log` remains request-bound (`leave_request_id` is NOT NULL, and its action CHECK is limited
+  to submitted/approved/rejected), so policy events use their own append-only table.
+- `/settings/policies` gives HR the form, the current-rate snapshot, and the recent change log.
+  Both the page and the route use `canConfigurePolicies`; the policy snapshot and balance card read
+  the rate effective today, while the accrual job reads the rate effective for its run month.
 
 ## Project structure
 
@@ -312,12 +369,13 @@ app/
     dashboard/           Role-aware overview
     requests/            My requests, new request, request detail
     balance/             DB-backed confirmed vs pending balances
-    approvals/           DB manager queue + decisions (HR state explicit)
+    approvals/           DB manager queue + decisions; HR override queue
     audit/               HR audit report (DB-backed, per employee)
-    settings/policies/   HR policy read-only view
+    settings/policies/   HR effective-dated policy admin
     forbidden/           403 page
   api/health/            Health probe
-  api/leave-requests/    GET/POST + [id]/decision
+  api/leave-requests/    GET/POST + [id]/decision + [id]/override
+  api/policies/          POST /api/policies (HR policy rate upsert)
   api/audit/             GET /api/audit/:userId (HR admin only)
   globals.css            Tailwind v4 tokens + layered base styles
 components/
@@ -329,8 +387,8 @@ lib/
   auth/                  Roles, Supabase clients, session + identity mapping
   db/                    Lazy pooled client, DB users, leave-request service
   domain/                Pure leave rules (balance warning)
-  mock/                  Day 0 fixtures still used by the remaining pages
-  validation/            Zod request/decision schemas
+  mock/                  legacy Day 0 fixtures (no page imports them)
+  validation/            Zod request/decision/override/policy schemas
 db/migrations/           Postgres schema
 db/seed.sql              Demo data
 scripts/                 Migration + seed runners
@@ -344,15 +402,17 @@ proxy.ts                 Next 16 route guard (not middleware.ts)
 - **Real auth.** Supabase Auth issues the session cookies; `proxy.ts` verifies them before every
   non-public route. The mock `mock-*` cookies and role selector are removed. Server components read
   the session with `getSession()`, which maps the verified email to the DB `users` row.
-- **Split data.** `GET`/`POST /api/leave-requests`, the decision route, `/requests/new`, `/balance`,
-  `/audit`, and the manager `/approvals` queue use Postgres. The dashboard, request list/detail, and
-  policy pages still read `lib/mock/data.ts`.
+- **Split data.** `GET`/`POST /api/leave-requests`, the decision and override routes,
+  `POST /api/policies`, `/requests/new`, `/balance`, `/requests`, `/requests/[id]`, the dashboard,
+  `/settings/policies`, and the manager + HR `/approvals` queues use Postgres. No page reads
+  `lib/mock/data.ts`.
 - **Route handlers.** `/api/health`, `GET`/`POST /api/leave-requests`,
-  `POST /api/leave-requests/:id/decision`, `GET /api/audit/:userId`,
-  `GET`/`POST /api/jobs/accrual`, and `GET /auth/callback`.
+  `POST /api/leave-requests/:id/decision`, `POST /api/leave-requests/:id/override`,
+  `POST /api/policies`, `GET /api/audit/:userId`, `GET`/`POST /api/jobs/accrual`, and
+  `GET /auth/callback`.
 - **Manager queue scope.** `scope=team` is manager-only. It uses
-  `WHERE employee.manager_id = :current_user_id`; employees and HR receive 403. The HR override
-  view is not part of TASK-013.
+  `WHERE employee.manager_id = :current_user_id`; employees and HR receive 403. HR override uses a
+  separate org query and endpoint; it never widens the manager queue.
 - **No provider SDK beyond auth.** No email, storage, payments, or OAuth client beyond what Supabase
   Auth provides.
 

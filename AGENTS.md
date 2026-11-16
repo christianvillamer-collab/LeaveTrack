@@ -4,15 +4,17 @@
 
 Next.js 16 (App Router) + TypeScript + Tailwind v4 + Postgres/Supabase leave-management app.
 
-**Day 0 scaffold + TASK-011/012/013/014/015/016/017 + E2-02/03/05.** Sign-in uses Supabase Auth
-(`@supabase/ssr`); the mock `mock-*` cookies are gone. The dashboard still reads fixtures from
-`lib/mock/data.ts`; `POST /api/leave-requests` + `/requests/new` write to Postgres, and
-`GET /api/leave-requests` + `/balance` + `/requests` + `/requests/[id]` + the manager
-`/approvals` queue read from it. Managers can approve/reject through
-`POST /api/leave-requests/:id/decision`, and HR reads per-employee reports through
-`GET /api/audit/:userId` + `/audit`. A monthly cron job accrues balances through
-`GET`/`POST /api/jobs/accrual`.
-Do not wire the remaining DB-backed pages without a task — that is future Day 1 work.
+**Day 0 scaffold + TASK-011/012/013/014/015/016/017 + E2-02/03/05/06/07/08.** Sign-in uses
+Supabase Auth (`@supabase/ssr`); the mock `mock-*` cookies are gone. The role-aware dashboard reads
+balances, requests, audit rows, policies, and accrual status from Postgres; `POST /api/leave-requests`
+and `/requests/new` write to Postgres, while `GET /api/leave-requests` + `/balance` + `/requests` +
+`/requests/[id]` + the manager `/approvals` queue read from it. Managers can approve/reject through
+`POST /api/leave-requests/:id/decision`, HR can override any pending request through
+`POST /api/leave-requests/:id/override`, and HR reads per-employee reports through
+`GET /api/audit/:userId` + `/audit`. HR sets effective-dated policy rates through
+`POST /api/policies` + `/settings/policies`. A monthly cron job accrues balances through
+`GET`/`POST /api/jobs/accrual`. Every application screen is DB-backed; do not reintroduce
+`lib/mock/data.ts` into a page.
 
 ## Commands
 
@@ -62,16 +64,18 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   are still refreshed in `proxy.ts`; only `/api/health` and `/api/jobs/accrual` bypass the session
   read entirely. A Server Component cannot persist a rotated refresh token, so skipping that refresh
   can revoke the session via reuse detection.
-- The dashboard still reads `lib/mock/data.ts` (fixtures + selectors); `/requests` and
-  `/requests/[id]` are DB-backed. Types are in `lib/types.ts`. Replace selectors task by task; keep
-  component prop shapes stable.
+- The dashboard is DB-backed per role: employees read `getMyLeaveData`, managers read the
+  SQL-scoped `getTeamLeaveData` queue, and HR reads the org-wide list, directory, policy snapshot,
+  audit counts, and `getAccrualSummary()`. `/settings/policies` is DB-backed and read/write for HR.
+  Types are in `lib/types.ts`; keep component prop shapes stable.
 - `lib/db/client.ts` is lazy. Importing it must never open a connection. Supabase's transaction
   pooler requires `prepare: false`; keep the pool at one connection for scripts.
 - `lib/db/*` owns SQL. `POST /api/leave-requests` resolves the DB user from the session email and
   writes `leave_requests` + `audit_log` in one transaction. Provider claims and the removed cookie
   role are never an identity source; never trust a client-supplied `userId`.
 - Route handlers are `/api/health`, `GET`/`POST /api/leave-requests`,
-  `POST /api/leave-requests/:id/decision`, `GET /api/audit/:userId`, and `GET /auth/callback`. All
+  `POST /api/leave-requests/:id/decision`, `POST /api/leave-requests/:id/override`,
+  `POST /api/policies`, `GET /api/audit/:userId`, and `GET /auth/callback`. All
   API failures must go through `withApiHandler` + `AppError` and return
   `{ success:false, error:{ code, message } }`; use `successStatus: 201` for created resources.
   Dynamic routes receive `params` through the handler context. The `/auth/callback` redirect uses
@@ -79,11 +83,24 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
 - Decisions are manager-only and transactional: lock the request, verify the owner’s `manager_id`,
   reject non-pending/duplicate decisions with 409, decrement only tracked leave types on approve,
   require a reject reason, and insert the append-only audit row in the same transaction. Over-balance
-  approval is 409 (HR override future); Unpaid approval skips the balance.
+  approval is 409 (HR over-balance is E2-11); Unpaid approval skips the balance.
+- HR override is a separate transactional path (`overrideLeaveRequest`) sharing the decision helper:
+  HR role only, `override: true` plus a 3–2000 char reason required for approve and reject, never the
+  actor’s own request (403), pending/duplicate 409, and an audit detail prefixed `HR override`.
+  `listOrgLeaveRequests()` backs the HR queue; the manager `WHERE manager_id = :current_user_id`
+  predicate is unchanged and `scope=team` stays manager-only.
 - Balance reads use `getMyLeaveData`/`getBalancesForUser`: confirmed from `leave_balances`, pending
   from active pending requests. `lastAccruedAt` is the latest `accrual_ledger.created_at` for that
   leave type (`null` when no accrual has run, and always `null` for untracked types) — never
   `leave_balances.updated_at`, which moves on approval.
+- Policy rates are **effective-dated** (`leave_policies.effective_from`, a month start; unique with
+  `user_id` + `leave_type_id`). The rate in effect for an as-of date is the latest row with
+  `effective_from <= as-of`. The accrual job resolves against the **run period**, while
+  `getBalancesForUser` and `listPolicyOverview` resolve against the current UTC date; keep those
+  three predicates identical or the balance card, dashboard snapshot, and accrual will disagree.
+  HR writes through `upsertPolicyRate` (`POST /api/policies`): past months are rejected, a real
+  change upserts one dated row and inserts exactly one `policy_audit_log` row, and a same-month
+  same-rate save is a no-op. Never rewrite past months or the request-bound `audit_log`.
 - `scope=team` is manager-only (DB role). The direct-report filter is SQL:
   `employee.manager_id = :current_user_id`. Never post-filter in JS. HR override is separate; the
   `/approvals` page shows HR an explicit boundary state.
@@ -97,7 +114,8 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   `db/migrations/0003_db_authorization.sql`): `anon`/`authenticated` have no grants and
   `AS RESTRICTIVE` RLS deny policies (a permissive deny would be OR'd away by a future allow
   policy); `leavetrack_app` is the server-only `NOBYPASSRLS` target with verb-level grants and no
-  `DELETE`/`TRUNCATE`. New tables must ship RLS + both policies + grants in the same migration, and
+  `DELETE`/`TRUNCATE`. `leave_policies` is `SELECT/INSERT/UPDATE`; `policy_audit_log` is
+  `SELECT/INSERT` only. New tables must ship RLS + both policies + grants in the same migration, and
   new functions must revoke `EXECUTE` from `PUBLIC`/`anon`/`authenticated`. The app still connects
   as the owner (`postgres.<project>`), which bypasses RLS, so `lib/auth/policy.ts` and the scoped SQL
   remain the live gate. DB tests and `db:seed` need the owner role; `npm run test:db` writes and must

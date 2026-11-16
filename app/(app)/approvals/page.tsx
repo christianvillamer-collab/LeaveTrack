@@ -9,24 +9,32 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { canManageRequests, canRunAudit, canViewTeam } from "@/lib/auth/policy";
+import {
+  canManageRequests,
+  canOverrideRequest,
+  canOverrideRequests,
+  canViewTeam,
+} from "@/lib/auth/policy";
 import { requirePolicy } from "@/lib/auth/session";
-import { getTeamLeaveData } from "@/lib/db/leave";
-import type { TeamLeaveData } from "@/lib/types";
+import { getTeamLeaveData, listOrgLeaveRequests } from "@/lib/db/leave";
+import type { TeamLeaveData, TeamLeaveRequest } from "@/lib/types";
 
 export const metadata = { title: "Approvals" };
 
 export default async function ApprovalsPage() {
   const session = await requirePolicy(canManageRequests);
   const isManager = canViewTeam(session);
-  const isHr = canRunAudit(session);
+  const isHr = canOverrideRequests(session);
 
   let databaseUnavailable = false;
-  let data: TeamLeaveData = { requests: [], directReports: [] };
+  let managerData: TeamLeaveData = { requests: [], directReports: [] };
+  let orgRequests: TeamLeaveRequest[] = [];
 
   try {
     if (isManager) {
-      data = await getTeamLeaveData(session.id);
+      managerData = await getTeamLeaveData(session.id);
+    } else if (isHr) {
+      orgRequests = await listOrgLeaveRequests();
     }
   } catch (error) {
     if (error instanceof AppError && error.code === ERROR_CODES.DATABASE_NOT_CONFIGURED) {
@@ -35,9 +43,21 @@ export default async function ApprovalsPage() {
       throw error;
     }
   }
-  const pending = data.requests.filter((request) => request.status === "pending");
-  const decided = data.requests.filter((request) => request.status !== "pending");
-  const reports = data.directReports;
+
+  const requests = isManager ? managerData.requests : orgRequests;
+  const pending = requests.filter((request) => request.status === "pending");
+  const decided = requests.filter((request) => request.status !== "pending");
+  // The queue and `/requests/[id]` must agree: HR can never act on their own
+  // request. The server enforces the same predicate transactionally.
+  const canActOn = (request: TeamLeaveRequest) =>
+    isHr
+      ? canOverrideRequest(
+          { id: session.id, role: session.role },
+          { ownerId: request.employee.id, ownerManagerId: null, status: request.status },
+        )
+      : true;
+  const reports = managerData.directReports;
+  const employeesWithRequests = new Set(requests.map((request) => request.employee.id)).size;
   const oldestWaiting =
     pending.length === 0
       ? 0
@@ -54,45 +74,28 @@ export default async function ApprovalsPage() {
         title="Approvals"
         description={
           isHr
-            ? "HR override is outside TASK-013; manager queues are scoped by manager_id."
+            ? "Review and override any employee's request. Every override needs a reason and writes an audit row."
             : "Requests from your direct reports, and nobody else."
         }
       />
 
-      {!isManager || databaseUnavailable ? (
-        <Alert
-          variant="warning"
-          title={
-            databaseUnavailable
-              ? "Database not configured"
-              : isHr
-                ? "HR override is not part of TASK-013"
-                : "Manager access required"
-          }
-        >
-          {databaseUnavailable ? (
-            <div className="space-y-2">
-              <p>
-                The approvals queue needs Postgres. Set{" "}
-                <code className="font-mono">DATABASE_URL</code> in{" "}
-                <code className="font-mono">.env.local</code>, then run:
-              </p>
-              <p className="text-caption font-mono">npm run db:migrate && npm run db:seed</p>
-            </div>
-          ) : isHr ? (
+      {!isManager && !isHr ? (
+        <Alert variant="warning" title="Approvals access required">
+          <p>
+            The signed-in account is not a manager or HR admin. Approvals are scoped to employees
+            whose database manager is the current user.
+          </p>
+        </Alert>
+      ) : databaseUnavailable ? (
+        <Alert variant="warning" title="Database not configured">
+          <div className="space-y-2">
             <p>
-              This task covers manager queues only. Use the{" "}
-              <Link href="/audit" className="font-semibold underline underline-offset-4">
-                audit log
-              </Link>{" "}
-              for HR oversight until a separate override view is scoped.
+              The approvals queue needs Postgres. Set{" "}
+              <code className="font-mono">DATABASE_URL</code> in{" "}
+              <code className="font-mono">.env.local</code>, then run:
             </p>
-          ) : (
-            <p>
-              The signed-in account is not a manager. Approvals are scoped to employees whose
-              database manager is the current user.
-            </p>
-          )}
+            <p className="text-caption font-mono">npm run db:migrate && npm run db:seed</p>
+          </div>
         </Alert>
       ) : (
         <>
@@ -103,7 +106,7 @@ export default async function ApprovalsPage() {
             <StatCard
               label="Pending requests"
               value={String(pending.length)}
-              hint="Direct reports only"
+              hint={isHr ? "Across all teams" : "Direct reports only"}
               icon={Inbox}
               tone="warning"
             />
@@ -115,9 +118,9 @@ export default async function ApprovalsPage() {
               tone={oldestWaiting > 3 ? "danger" : "info"}
             />
             <StatCard
-              label="Direct reports"
-              value={String(reports.length)}
-              hint="Manager-filtered query"
+              label={isHr ? "Employees with requests" : "Direct reports"}
+              value={String(isHr ? employeesWithRequests : reports.length)}
+              hint={isHr ? "Org-wide query" : "Manager-filtered query"}
               icon={Users}
             />
             <StatCard
@@ -129,9 +132,13 @@ export default async function ApprovalsPage() {
             />
           </section>
 
-          <Alert variant="info" title="Every decision is audited">
-            Approving deducts the request’s days from the employee’s balance; rejecting requires a
-            reason and leaves the balance unchanged. Both actions write an audit row.
+          <Alert
+            variant="info"
+            title={isHr ? "Every override is audited" : "Every decision is audited"}
+          >
+            {isHr
+              ? "Overrides bypass the direct-manager chain. Approving deducts the request's days from the employee's balance; both decisions require a reason and write an audit row with your name."
+              : "Approving deducts the request’s days from the employee’s balance; rejecting requires a reason and leaves the balance unchanged. Both actions write an audit row."}
           </Alert>
 
           <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
@@ -144,41 +151,83 @@ export default async function ApprovalsPage() {
               <TeamRequestTable
                 requests={pending}
                 emptyTitle="Queue is clear"
-                emptyDescription="New requests from your direct reports will appear here."
+                emptyDescription={
+                  isHr
+                    ? "New requests from any employee will appear here."
+                    : "New requests from your direct reports will appear here."
+                }
                 actionable
+                override={isHr}
+                canActOn={canActOn}
                 variant="cards"
               />
             </section>
 
             <aside className="space-y-6" aria-label="Queue scope">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Who appears in this queue</CardTitle>
-                  <CardDescription>Only employees whose manager_id matches you.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <Alert variant="info">
-                    The filter belongs in the query:{" "}
-                    <code className="text-caption font-mono">
-                      WHERE manager_id = :current_user_id
-                    </code>
-                    . Never filter the full list in the browser.
-                  </Alert>
-                  <ul className="text-small space-y-2">
-                    {reports.map((report) => (
-                      <li
-                        key={report.id}
-                        className="border-border flex items-center justify-between gap-3 border-b pb-2 last:border-0 last:pb-0"
-                      >
-                        <span className="text-foreground truncate">{report.name}</span>
-                        <span className="text-muted-foreground text-caption truncate">
-                          {report.email}
-                        </span>
+              {isHr ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>HR override scope</CardTitle>
+                    <CardDescription>
+                      Every team, without widening the manager queue.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <Alert variant="info">
+                      Manager decisions still run through{" "}
+                      <code className="text-caption font-mono">
+                        WHERE manager_id = :current_user_id
+                      </code>
+                      . This page uses a separate org-wide query; it never filters the manager list
+                      in the browser.
+                    </Alert>
+                    <ul className="text-small space-y-2">
+                      <li>
+                        <Link
+                          href="/requests"
+                          className="font-semibold underline underline-offset-4"
+                        >
+                          Browse every request
+                        </Link>
                       </li>
-                    ))}
-                  </ul>
-                </CardContent>
-              </Card>
+                      <li>
+                        <Link href="/audit" className="font-semibold underline underline-offset-4">
+                          Review the audit log
+                        </Link>
+                      </li>
+                    </ul>
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Who appears in this queue</CardTitle>
+                    <CardDescription>Only employees whose manager_id matches you.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <Alert variant="info">
+                      The filter belongs in the query:{" "}
+                      <code className="text-caption font-mono">
+                        WHERE manager_id = :current_user_id
+                      </code>
+                      . Never filter the full list in the browser.
+                    </Alert>
+                    <ul className="text-small space-y-2">
+                      {reports.map((report) => (
+                        <li
+                          key={report.id}
+                          className="border-border flex items-center justify-between gap-3 border-b pb-2 last:border-0 last:pb-0"
+                        >
+                          <span className="text-foreground truncate">{report.name}</span>
+                          <span className="text-muted-foreground text-caption truncate">
+                            {report.email}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </CardContent>
+                </Card>
+              )}
             </aside>
           </div>
 
@@ -186,21 +235,24 @@ export default async function ApprovalsPage() {
             <CardHeader>
               <CardTitle>Decision history</CardTitle>
               <CardDescription>
-                Approved and rejected requests from your direct reports, newest first.
+                {isHr
+                  ? "Approved and rejected requests across the org, newest first."
+                  : "Approved and rejected requests from your direct reports, newest first."}
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
               <TeamRequestTable
                 requests={decided}
                 emptyTitle="No decisions yet"
-                emptyDescription="Decisions will appear here once TASK-014 records them."
+                emptyDescription="Decisions will appear here once they are recorded."
               />
             </CardContent>
           </Card>
 
           <p className="text-caption text-muted-foreground">
-            Scope: {reports.length} direct reports. Other teams are excluded by the SQL manager_id
-            predicate.
+            {isHr
+              ? `Scope: ${employeesWithRequests} employees with requests. Manager queues keep the SQL manager_id predicate.`
+              : `Scope: ${reports.length} direct reports. Other teams are excluded by the SQL manager_id predicate.`}
           </p>
         </>
       )}

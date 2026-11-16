@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { canDecideRequest, canViewRequest } from "@/lib/auth/policy";
+import { canDecideRequest, canOverrideRequest, canViewRequest } from "@/lib/auth/policy";
 import { getSession, requireSession } from "@/lib/auth/session";
 import { listAuditEventsForRequest } from "@/lib/db/audit";
 import { getBalancesForUser, getLeaveRequestDetail } from "@/lib/db/leave";
@@ -143,10 +143,12 @@ export default async function RequestDetailPage({ params }: { params: Promise<{ 
     getBalancesForUser(request.employee.id),
   ]);
   const canDecide = canDecideRequest(actor, scope);
+  const canOverride = canOverrideRequest(actor, scope);
   const managerName = request.employee.managerName;
   const balance = balances.find((entry) => entry.leaveType.id === request.leaveType.id);
   const decisionTarget: TeamLeaveRequest = {
     id: request.id,
+    reference: request.reference,
     employee: {
       id: request.employee.id,
       name: request.employee.name,
@@ -278,6 +280,17 @@ export default async function RequestDetailPage({ params }: { params: Promise<{ 
                 </p>
               </div>
               <TeamDecisionActions request={decisionTarget} />
+            </section>
+          ) : canOverride ? (
+            <section aria-label="Override panel" className="space-y-3">
+              <div>
+                <h2 className="text-h3 text-foreground">Override this decision</h2>
+                <p className="text-small text-muted-foreground">
+                  You are acting outside the direct-manager chain. A reason is required, and the
+                  audit log records your name and the balance change.
+                </p>
+              </div>
+              <TeamDecisionActions request={decisionTarget} override />
             </section>
           ) : null}
         </div>

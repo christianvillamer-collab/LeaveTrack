@@ -97,6 +97,20 @@ export interface Policy {
   assignedEmployees: number;
 }
 
+/** One effective-dated rate: the rate for a month and every month after it. */
+export interface PolicyRate {
+  userId: string;
+  leaveTypeId: string;
+  accrualPerMonth: number;
+  effectiveFrom: string;
+}
+
+/** Result of an HR policy upsert; `auditWritten` is false for a no-op save. */
+export interface PolicyRateResult extends PolicyRate {
+  previousRate: number | null;
+  auditWritten: boolean;
+}
+
 /**
  * Identity columns the database actually stores for a user. `Employee` carries
  * presentation-only fields (job title, team) that have no column yet, so audit
@@ -126,6 +140,18 @@ export interface AuditReportRequest {
   createdAt: string;
   decidedAt: string | null;
   decidedBy: AuditEventPerson | null;
+}
+
+/** One append-only row of `policy_audit_log`, joined for display. */
+export interface PolicyChange {
+  id: string;
+  employee: AuditEventPerson;
+  leaveType: LeaveType;
+  effectiveFrom: string;
+  previousRate: number | null;
+  newRate: number;
+  actor: AuditEventPerson;
+  changedAt: string;
 }
 
 export interface AuditReportEmployee extends AuditEventPerson {
@@ -163,6 +189,7 @@ export interface CreateLeaveRequestResult {
 
 export interface MyLeaveRequest {
   id: string;
+  reference: string;
   leaveType: LeaveType;
   startDate: string;
   endDate: string;
@@ -184,6 +211,7 @@ export interface TeamMember {
 
 export interface TeamLeaveRequest {
   id: string;
+  reference: string;
   employee: TeamMember;
   leaveType: LeaveType;
   startDate: string;
@@ -218,4 +246,39 @@ export interface AccrualResult {
   usersAccrued: number;
   balancesAccrued: number;
   totalDays: number;
+}
+
+/**
+ * Org-level accrual status read from `accrual_ledger`. A never-run accrual is
+ * all-null rather than a fabricated date (ADR-E002: the ledger is the marker,
+ * never `leave_balances.updated_at`).
+ */
+export interface AccrualSummary {
+  lastPeriod: string | null;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  peopleProcessed: number;
+}
+
+/** One row of the HR policy snapshot, grouped from `leave_policies`. */
+export interface PolicyOverview {
+  leaveType: LeaveType;
+  accrualPerMonth: number;
+  assignedEmployees: number;
+}
+
+/** Directory row with the manager name resolved by a self join. */
+export interface DirectoryEntry {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  managerId: string | null;
+  managerName: string | null;
+}
+
+/** Org-wide request list plus headcount, the two inputs HR totals need. */
+export interface OrgLeaveOverview {
+  requests: RequestSummary[];
+  headcount: number;
 }

@@ -34,18 +34,23 @@ canDecideRequest(actor, { ownerId, ownerManagerId, status });
 
 ## Matrix
 
-| Check                   | Employee   | Manager                 | HR Admin                  |
-| ----------------------- | ---------- | ----------------------- | ------------------------- |
-| `canViewRequest`        | own record | own + direct reports    | all records               |
-| `canDecideRequest`      | never      | direct reports, pending | no (override is separate) |
-| `canViewTeam`           | no         | yes                     | no                        |
-| `canDecideTeamRequests` | no         | yes                     | no                        |
-| `canManageRequests`     | no         | yes                     | yes                       |
-| `canRunAudit`           | no         | no                      | yes                       |
-| `canConfigurePolicies`  | no         | no                      | yes                       |
+| Check                   | Employee   | Manager                 | HR Admin                      |
+| ----------------------- | ---------- | ----------------------- | ----------------------------- |
+| `canViewRequest`        | own record | own + direct reports    | all records                   |
+| `canDecideRequest`      | never      | direct reports, pending | no (use `canOverrideRequest`) |
+| `canOverrideRequests`   | no         | no                      | yes (endpoint role gate)      |
+| `canOverrideRequest`    | no         | no                      | pending, never own request    |
+| `canViewTeam`           | no         | yes                     | no                            |
+| `canDecideTeamRequests` | no         | yes                     | no                            |
+| `canManageRequests`     | no         | yes                     | yes                           |
+| `canRunAudit`           | no         | no                      | yes                           |
+| `canConfigurePolicies`  | no         | no                      | yes                           |
 
-- `canDecideRequest` rejects any non-pending request, even for a direct report, and denies HR.
-  An audited HR override is a separate task.
+- `canDecideRequest` rejects any non-pending request, even for a direct report, and denies HR;
+  HR decisions go through `canOverrideRequest` + `POST /api/leave-requests/:id/override`.
+- An override requires the explicit `override: true` flag, a reason for approvals and rejections
+  alike, and writes `decided_by` plus an audit row prefixed `HR override`. It never bypasses the
+  pending/duplicate or over-balance guards (over-balance is E2-11).
 - `scope=team` stays manager-only; the SQL predicate enforces it, the policy gate does not replace it.
 - Deny by default: an unknown role or a missing relationship never grants access.
 

@@ -624,9 +624,3 @@ export function auditForEmployee(employeeId: string): AuditEvent[] {
 export function allAuditEvents(): AuditEvent[] {
   return [...auditEvents].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
 }
-
-export const accrualSummary = {
-  lastRunAt: "2026-11-01T00:00:00.000Z",
-  nextRunAt: "2026-12-01T00:00:00.000Z",
-  employeesProcessed: 800,
-};

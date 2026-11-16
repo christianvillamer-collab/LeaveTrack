@@ -16,7 +16,7 @@ Rationale: the team already runs Next.js + Supabase on other projects (fits nexu
 ```
 users            (id, name, email, role[employee|manager|hr_admin], manager_id nullable FK -> users.id)
 leave_types      (id, name, tracks_balance boolean)          -- seeded: Vacation, Sick, Unpaid
-leave_policies   (id, user_id FK, leave_type_id FK, accrual_per_month numeric)
+leave_policies   (id, user_id FK, leave_type_id FK, accrual_per_month numeric, effective_from date)
 leave_balances   (id, user_id FK, leave_type_id FK, balance numeric, updated_at)
 leave_requests   (id, user_id FK, leave_type_id FK, start_date, end_date, reason,
                   status[pending|approved|rejected], decided_by FK -> users.id nullable,
@@ -24,11 +24,21 @@ leave_requests   (id, user_id FK, leave_type_id FK, start_date, end_date, reason
 audit_log        (id, leave_request_id FK, actor_id FK, action, occurred_at)
 accrual_ledger   (id, user_id FK, leave_type_id FK, period date, days numeric, created_at,
                   unique (user_id, leave_type_id, period))
+policy_audit_log (id, user_id FK, leave_type_id FK, effective_from date, previous_rate,
+                  new_rate, actor_id FK, changed_at)
 ```
 
 - `accrual_ledger` is the authoritative monthly accrual marker (one row per user/type/month) and the
   source of `lastAccruedAt`. `leave_balances.updated_at` cannot serve that role because any balance
   write (an approval, for example) moves it.
+
+- `leave_policies` is **effective-dated**: `effective_from` is a month start and is unique with
+  `user_id` + `leave_type_id`. The rate in effect for an as-of date is the latest row with
+  `effective_from <= as-of`. The accrual job resolves against its run period; balance and dashboard
+  reads resolve against the current UTC date. Past periods are never rewritten.
+- `policy_audit_log` is the append-only policy change trail (one row per real create/correct), kept
+  separate from `audit_log` because that table requires a request and its action CHECK is
+  request-only.
 
 - `leave_requests.is_deleted` — **soft delete only**, per BR-04 (3-year retention). No hard-delete path exists anywhere in the codebase.
 - `users.manager_id` is the sole source of truth for the scoped-visibility rule (US-04). A manager's queue query always filters `WHERE manager_id = :current_user_id`.
@@ -41,6 +51,8 @@ accrual_ledger   (id, user_id FK, leave_type_id FK, period date, days numeric, c
 | GET    | /api/leave-requests?scope=mine   | Employee      | US-02 balance context.                                         |
 | GET    | /api/leave-requests?scope=team   | Manager       | US-04 — server-side filter on `manager_id`, never client-side. |
 | POST   | /api/leave-requests/:id/decision | Manager       | US-03. 403 if requester is not a direct report (AC3).          |
+| POST   | /api/leave-requests/:id/override | HR Admin      | E2-07. Explicit `override: true` + reason; audited.            |
+| POST   | /api/policies                    | HR Admin      | E2-08. Upsert an effective-dated rate; one audit row.          |
 | GET    | /api/audit/:userId               | HR Admin      | US-05. Reads soft-deleted-excluded, never hard-deleted, rows.  |
 | POST   | /api/jobs/accrual                | System (cron) | US-07. Idempotent — see ADR-LeaveTrack-E002.                   |
 
@@ -55,8 +67,8 @@ Error format: `{ success: false, error: { code, message } }` on every non-2xx re
 ### Database authorization
 
 - Database access is **deny-by-default** for the Supabase client roles (`ADR-LeaveTrack-E005`). `anon` and `authenticated` hold no table privileges in `public` — including for `schema_migrations` — and future tables created by the migration owner do not inherit any. PostgREST therefore cannot turn the public anon key into row access, and `AS RESTRICTIVE` RLS deny policies are a second layer that survives a future permissive allow policy being added by mistake.
-- All seven tables (`users`, `leave_types`, `leave_policies`, `leave_balances`, `leave_requests`, `audit_log`, `accrual_ledger`) have RLS enabled with an explicit `leavetrack_app` allow policy and an explicit `anon, authenticated` restrictive deny policy. The decision and grant matrix live in `ADR-LeaveTrack-E005`.
-- The server-only `leavetrack_app` role is `NOLOGIN NOBYPASSRLS` with verb-level grants only: `SELECT` on reference/identity tables, `SELECT/INSERT/UPDATE` on balances and requests, `SELECT/INSERT` on the audit log and accrual ledger. It never receives `DELETE`, `TRUNCATE`, or DDL. A pre-existing role is normalized to those attributes by the migration.
+- All eight tables (`users`, `leave_types`, `leave_policies`, `leave_balances`, `leave_requests`, `audit_log`, `accrual_ledger`, `policy_audit_log`) have RLS enabled with an explicit `leavetrack_app` allow policy and an explicit `anon, authenticated` restrictive deny policy. The decision and grant matrix live in `ADR-LeaveTrack-E005`.
+- The server-only `leavetrack_app` role is `NOLOGIN NOBYPASSRLS` with verb-level grants only: `SELECT` on reference/identity tables, `SELECT/INSERT/UPDATE` on balances, requests, and policies, `SELECT/INSERT` on the audit log, policy audit log, and accrual ledger. It never receives `DELETE`, `TRUNCATE`, or DDL. A pre-existing role is normalized to those attributes by the migration.
 - `EXECUTE` on the application trigger functions is revoked from `PUBLIC`, `anon`, and `authenticated`; triggers are unaffected because `EXECUTE` is checked at trigger-creation time.
 - The app currently connects as the Supabase owner (`postgres.<project>`), which bypasses RLS. `lib/auth/policy.ts` plus scoped SQL remain the live authorization gate; the least-privilege role is the target server credential and its cutover is an ops step, not a schema change.
 
@@ -77,8 +89,8 @@ Epic 1 delivered the core submit → balance → scoped queue → decision → a
 ### Workstreams
 
 1. **Identity and authorization** — real provider (`ADR-E003`), DB-backed identity, centralized RBAC + relationship scoping (`ADR-E004`), DB-level enforcement decision.
-2. **Complete the DB-backed surface** — `/requests` and `/requests/[id]` (done), dashboard, HR override view, policy and people admin.
-3. **Close PRD acceptance gaps** — submission/decision notifications, HR over-balance override, audit date-range and export.
+2. **Complete the DB-backed surface** — `/requests` and `/requests/[id]` (done), dashboard (done), HR override view (done), effective-dated policy admin (done), people admin.
+3. **Close PRD acceptance gaps** — submission/decision notifications, HR over-balance override (E2-11), audit date-range and export.
 4. **Scale and hardening** — pagination and indexes, 800-user load test, route-level authorization tests, fixture reset, accrual-ledger append-only guard, DB-down states, nonce-based CSP.
 
 ### Auth (accepted — E2-02)
@@ -99,14 +111,15 @@ The app uses **RBAC + relationship-based scoping**, not RBAC alone. See `ADR-Lea
 - `users.manager_id` gates _which records_ a manager may act on.
 - Resource scope is always a SQL predicate (`WHERE employee.manager_id = :current_user_id`), never a client-side filter.
 - The DB `users.role` is the source of truth; neither a provider claim nor a cookie role is trusted for authorization.
-- All page and route authorization checks call the pure `lib/auth/policy.ts` matrix (an `Actor` of DB `id` + `role` plus the record's scope). `lib/auth/access.ts` was deleted in E2-03; `/requests` and `/requests/[id]` now use DB actors, and only the dashboard still uses fixture actors until E2-06.
-- HR override is a separate audited action, not a blanket "HR can do anything."
+- All page and route authorization checks call the pure `lib/auth/policy.ts` matrix (an `Actor` of DB `id` + `role` plus the record's scope). `lib/auth/access.ts` was deleted in E2-03; `/requests`, `/requests/[id]`, and the dashboard now use DB actors, and the dashboard's employee and manager branches read only their own rows.
+- HR override is a separate audited action, not a blanket "HR can do anything." `POST /api/leave-requests/:id/override` requires `override: true` plus a reason, refuses the actor's own request (403), and shares the decision transaction's pending/duplicate and balance guards. Over-balance approval stays 409 for HR until E2-11.
 
 | Action                  | Employee  | Manager                   | HR Admin                       |
 | ----------------------- | --------- | ------------------------- | ------------------------------ |
 | Submit/view own request | Yes — own | Yes — own                 | Yes — own                      |
 | View team requests      | No        | Yes — direct reports only | No — queue is manager-only     |
 | Decide pending request  | No        | Yes — direct reports only | No — separate audited override |
+| Override any request    | No        | No                        | Yes — pending, not own         |
 | Run audit report        | No        | No                        | Yes                            |
 | Configure policies      | No        | No                        | Yes                            |
 | Run accrual job         | No        | No                        | No — system bearer only        |
@@ -117,6 +130,7 @@ The app uses **RBAC + relationship-based scoping**, not RBAC alone. See `ADR-Lea
 - `ADR-LeaveTrack-E003` — auth provider (accepted: Supabase Auth; implemented by E2-02).
 - `ADR-LeaveTrack-E004` — authorization model (RBAC + relationship scoping).
 - `ADR-LeaveTrack-E005` — database authorization (RLS deny-by-default + server-only least-privilege role; implemented by E2-04).
+- `ADR-LeaveTrack-E006` — policy effective dating (dated rate rows + append-only `policy_audit_log`; implemented by E2-08).
 
 ### Sequencing
 

@@ -4,8 +4,9 @@ BR-02 / US-03 AC3 / US-04: a manager must never see or act on another team's req
 data-exposure requirement, not a UI preference.
 
 TASK-013 implements the read queue (`getTeamLeaveData`); TASK-014 implements decision writes
-(`decideLeaveRequest`). HR override is intentionally not a manager-scope substitute: the team API
-returns 403 for HR, and the approvals page shows an explicit boundary state.
+(`decideLeaveRequest`); E2-07 adds the HR override path (`listOrgLeaveRequests` +
+`overrideLeaveRequest`). HR override is intentionally not a manager-scope substitute: the team API
+still returns 403 for HR, and `/approvals` uses a separate org-wide query for HR.
 
 ## Rule
 
@@ -38,6 +39,14 @@ return all.filter((r) => r.manager_id === currentUserId);
 // 5. Update request + balance + audit insert in the same transaction; never reveal the body on 403.
 ```
 
+## HR override (E2-07)
+
+`overrideLeaveRequest` shares the same transactional helper as `decideLeaveRequest`, so the lock →
+pending check → balance guard → status update → audit insert sequence cannot drift. It differs only
+in the relationship gate: HR may act on another user's pending request and may never act on their
+own (403). The manager predicate is untouched; the HR queue comes from a separate
+`listOrgLeaveRequests()` query with no manager filter.
+
 ## Tests that must exist
 
 1. Manager with 5 reports sees exactly those 5 employees' requests.
@@ -45,6 +54,8 @@ return all.filter((r) => r.manager_id === currentUserId);
 3. `POST /:id/decision` on a non-report returns 403 and writes no balance/audit row.
 4. Moving `users.manager_id` moves the pending request to the new manager's queue.
 5. HR override is a separate view/task; it must not widen `scope=team`.
+6. HR override on another team's pending request succeeds; HR on their own returns 403; managers
+   cannot use `/override`; `scope=team` still 403 for HR.
 
 ## Indexes
 

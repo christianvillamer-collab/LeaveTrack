@@ -4,7 +4,9 @@ import {
   decisionInputSchema,
   leaveRequestInputSchema,
   leaveRequestScopeSchema,
+  overrideInputSchema,
 } from "@/lib/validation/leave";
+import { policyRateInputSchema } from "@/lib/validation/policy";
 
 const VACATION_ID = "11111111-1111-4111-8111-111111111111";
 const SICK_ID = "22222222-2222-4222-8222-222222222222";
@@ -117,6 +119,88 @@ describe("decisionInputSchema", () => {
       decisionInputSchema.safeParse({
         decision: "approved",
         managerId: "a0000000-0000-4000-8000-000000000001",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("overrideInputSchema", () => {
+  const valid = {
+    override: true,
+    decision: "approved",
+    reason: "Balance reconciled with payroll.",
+  };
+
+  it("accepts an explicit override with a reason for approval", () => {
+    expect(overrideInputSchema.safeParse(valid).success).toBe(true);
+    expect(overrideInputSchema.safeParse({ ...valid, decision: "rejected" }).success).toBe(true);
+  });
+
+  it("requires the explicit override flag", () => {
+    const missing = { decision: valid.decision, reason: valid.reason };
+    expect(overrideInputSchema.safeParse(missing).success).toBe(false);
+    expect(overrideInputSchema.safeParse({ ...valid, override: false }).success).toBe(false);
+    expect(overrideInputSchema.safeParse({ ...valid, override: "true" }).success).toBe(false);
+  });
+
+  it("requires a reason of at least three characters for every decision", () => {
+    expect(overrideInputSchema.safeParse({ ...valid, reason: "" }).success).toBe(false);
+    expect(overrideInputSchema.safeParse({ ...valid, reason: "ok" }).success).toBe(false);
+    expect(overrideInputSchema.safeParse({ ...valid, reason: "   " }).success).toBe(false);
+  });
+
+  it("only accepts approved or rejected and rejects unknown fields", () => {
+    expect(overrideInputSchema.safeParse({ ...valid, decision: "pending" }).success).toBe(false);
+    expect(
+      overrideInputSchema.safeParse({
+        ...valid,
+        actorId: "a0000000-0000-4000-8000-000000000001",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("policyRateInputSchema", () => {
+  const valid = {
+    userId: "a0000000-0000-4000-8000-000000000004",
+    leaveTypeId: VACATION_ID,
+    accrualPerMonth: 1.5,
+    effectiveFrom: "2027-01-01",
+  };
+
+  it("accepts an effective-dated rate", () => {
+    expect(policyRateInputSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it("requires an effective month start", () => {
+    expect(policyRateInputSchema.safeParse({ ...valid, effectiveFrom: "2027-01-15" }).success).toBe(
+      false,
+    );
+    expect(policyRateInputSchema.safeParse({ ...valid, effectiveFrom: "2027-01" }).success).toBe(
+      false,
+    );
+  });
+
+  it("rejects rates outside 0–31 and rates with more than two decimals", () => {
+    expect(policyRateInputSchema.safeParse({ ...valid, accrualPerMonth: -1 }).success).toBe(false);
+    expect(policyRateInputSchema.safeParse({ ...valid, accrualPerMonth: 32 }).success).toBe(false);
+    expect(policyRateInputSchema.safeParse({ ...valid, accrualPerMonth: 1.255 }).success).toBe(
+      false,
+    );
+    expect(policyRateInputSchema.safeParse({ ...valid, accrualPerMonth: "1.5" }).success).toBe(
+      false,
+    );
+  });
+
+  it("rejects non-UUID ids and client-supplied actor fields", () => {
+    expect(policyRateInputSchema.safeParse({ ...valid, userId: "u-maya" }).success).toBe(false);
+    expect(policyRateInputSchema.safeParse({ ...valid, leaveTypeId: "lt-vacation" }).success).toBe(
+      false,
+    );
+    expect(
+      policyRateInputSchema.safeParse({
+        ...valid,
+        actorId: "a0000000-0000-4000-8000-000000000003",
       }).success,
     ).toBe(false);
   });
