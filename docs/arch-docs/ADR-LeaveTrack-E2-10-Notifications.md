@@ -82,8 +82,10 @@ Vercel Cron issues GET, so both verbs share one handler.
 
 `runNotificationOutbox(transport?)`:
 
-1. `claimPendingEmails()` leases up to 25 due rows with `for update skip locked` and pushes
-   `next_attempt_at` ten minutes out, so two overlapping runs cannot deliver the same message.
+1. A materialized CTE selects the oldest due rows (`limit 25`, `for update skip locked`) and pushes
+   `next_attempt_at` ten minutes out, so two overlapping runs cannot deliver the same message. The
+   CTE must stay `materialized`: an `IN (subquery … limit)` with `for update` is re-evaluated per
+   outer row and defeats the batch cap.
 2. Each row is sent individually; one bad address fails only its row.
 3. `recordEmailResult` writes the outcome:
    - success → `sent`, `sent_at = now()`, attempts incremented, lease cleared;

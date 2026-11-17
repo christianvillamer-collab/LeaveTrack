@@ -221,28 +221,30 @@ export async function markAllNotificationsRead(recipientId: string): Promise<num
  * Atomically leases a batch of due email rows and returns their recipients.
  * The lease (`next_attempt_at`) is what stops two overlapping cron runs from
  * delivering the same message; `skip locked` keeps them from blocking.
+ *
+ * The `materialized` CTE is load-bearing: an `IN (subquery ... limit n)` is
+ * re-evaluated per outer row once it contains `for update`, which silently
+ * defeats the batch cap. The CTE evaluates the ordered, locked, limited set
+ * exactly once, so a backlog drains across runs instead of in one invocation.
  */
 export async function claimPendingEmails(limit = 25): Promise<PendingEmail[]> {
   const rows = await getDb()<PendingEmailRow[]>`
+    with due as materialized (
+      select id
+      from notifications
+      where channel = 'email'
+        and status in ('pending', 'failed')
+        and attempts < ${MAX_EMAIL_ATTEMPTS}
+        and (next_attempt_at is null or next_attempt_at <= now())
+      order by created_at
+      limit ${limit}
+      for update skip locked
+    )
     update notifications n
     set next_attempt_at = now() + interval '10 minutes'
-    from users u
-    where u.id = n.recipient_id
-      and n.channel = 'email'
-      and n.status in ('pending', 'failed')
-      and n.attempts < ${MAX_EMAIL_ATTEMPTS}
-      and (n.next_attempt_at is null or n.next_attempt_at <= now())
-      and n.id in (
-        select c.id
-        from notifications c
-        where c.channel = 'email'
-          and c.status in ('pending', 'failed')
-          and c.attempts < ${MAX_EMAIL_ATTEMPTS}
-          and (c.next_attempt_at is null or c.next_attempt_at <= now())
-        order by c.created_at
-        limit ${limit}
-        for update skip locked
-      )
+    from due, users u
+    where n.id = due.id
+      and u.id = n.recipient_id
     returning
       n.id,
       n.subject,

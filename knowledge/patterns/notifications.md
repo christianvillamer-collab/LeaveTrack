@@ -31,8 +31,12 @@ durable outbox with two channels. This is the checklist for any change to that s
 
 ## Delivery rules
 
-- `claimPendingEmails()` leases due rows with `for update skip locked` and sets `next_attempt_at`
-  ten minutes ahead. Keep the lease; it is what stops overlapping cron runs from double-sending.
+- `claimPendingEmails()` leases due rows with a **materialized** CTE, `order by created_at`,
+  `limit n`, and `for update skip locked`. The CTE is load-bearing: an
+  `IN (select … limit n for update)` is re-evaluated per outer row and silently over-claims the
+  whole backlog. Keep the CTE and its `materialized` keyword. The lease (`next_attempt_at` ten
+  minutes ahead) is what stops overlapping cron runs from double-sending; `skip locked` stops them
+  from blocking each other.
 - `recordEmailResult`:
   - success → `sent`, `sent_at = now()`, attempts incremented, `next_attempt_at = null`;
   - failure → `failed`, backoff `2^attempts` minutes (capped at 60), terminal after

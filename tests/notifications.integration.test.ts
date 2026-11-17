@@ -10,6 +10,7 @@ import {
   overrideLeaveRequest,
 } from "@/lib/db/leave";
 import {
+  claimPendingEmails,
   listNotifications,
   markAllNotificationsRead,
   markNotificationRead,
@@ -438,11 +439,22 @@ describe.skipIf(!hasDatabase)("notification outbox integration", () => {
     expect(emailRow).toBeDefined();
     const emailRowId = emailRow?.id ?? "";
 
+    // Earlier suites leave pending email rows behind, and the worker caps each
+    // run. Park everything except this request's row so the assertion is about
+    // this row, not about backlog order.
+    await getDb()`
+      update notifications
+      set next_attempt_at = now() + interval '1 hour'
+      where channel = 'email'
+        and status in ('pending', 'failed')
+        and id <> ${emailRowId}
+    `;
+
     const transport = fakeTransport("ok");
     const first = await runNotificationOutbox(transport);
 
-    expect(first.processed).toBeGreaterThan(0);
-    expect(transport.sent.length).toBe(first.sent);
+    expect(first).toEqual({ processed: 1, sent: 1, failed: 0, skipped: 0 });
+    expect(transport.sent.length).toBe(1);
 
     const [sentRow] = await getDb()<{ status: string; attempts: number; sent_at: Date | null }[]>`
       select status, attempts, sent_at from notifications where id = ${emailRowId}
@@ -549,5 +561,28 @@ describe.skipIf(!hasDatabase)("notification outbox integration", () => {
     expect(row?.status).toBe("skipped");
     expect(row?.next_attempt_at).toBeNull();
     expect(row?.last_error).toContain("not configured");
+  });
+
+  it("leases at most the requested batch size", async () => {
+    // Reset more rows than the batch size so a re-evaluated IN(subquery) would
+    // over-claim; the materialized CTE must honor the cap exactly.
+    const seeded = await getDb()<{ id: string }[]>`
+      update notifications
+      set status = 'pending',
+          next_attempt_at = null,
+          attempts = 0
+      where id in (
+        select id
+        from notifications
+        where channel = 'email'
+        order by created_at
+        limit 6
+      )
+      returning id
+    `;
+    expect(seeded).toHaveLength(6);
+
+    const claimed = await claimPendingEmails(3);
+    expect(claimed).toHaveLength(3);
   });
 });
