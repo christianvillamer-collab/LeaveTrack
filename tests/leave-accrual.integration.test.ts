@@ -238,6 +238,72 @@ describe.skipIf(!hasDatabase)("monthly accrual", () => {
     }
   });
 
+  it("does not accrue for a deactivated person", async () => {
+    const inactivePeriod = "2670-01-01";
+    const before = await snapshotBalances();
+
+    await getDb()`
+      update users
+      set is_active = false,
+          deactivated_at = now()
+      where id = ${MAYA_ID}
+    `;
+
+    try {
+      await runAccrual(inactivePeriod);
+
+      const [maya] = await getDb()<{ count: number }[]>`
+        select count(*)::int as count
+        from accrual_ledger
+        where user_id = ${MAYA_ID}
+          and period = ${inactivePeriod}::date
+      `;
+      expect(maya.count).toBe(0);
+
+      const after = await snapshotBalances();
+
+      for (const [pair, balance] of before) {
+        const [userId] = pair.split(":");
+
+        if (userId === MAYA_ID) {
+          expect(after.get(pair)).toBe(balance);
+        }
+      }
+
+      // Prove the run itself happened; only the inactive person is skipped.
+      const [active] = await getDb()<{ count: number }[]>`
+        select count(*)::int as count
+        from accrual_ledger
+        where period = ${inactivePeriod}::date
+          and user_id <> ${MAYA_ID}
+      `;
+      expect(active.count).toBeGreaterThan(0);
+    } finally {
+      await getDb()`
+        update users
+        set is_active = true,
+            deactivated_at = null
+        where id = ${MAYA_ID}
+      `;
+
+      await getDb()`
+        delete from accrual_ledger
+        where period = ${inactivePeriod}::date
+      `;
+
+      for (const [pair, balance] of before) {
+        const [userId, leaveTypeId] = pair.split(":");
+
+        await getDb()`
+          update leave_balances
+          set balance = ${Number(balance)}
+          where user_id = ${userId}
+            and leave_type_id = ${leaveTypeId}
+        `;
+      }
+    }
+  });
+
   it("rejects a period that is not the first day of a month", async () => {
     await expect(runAccrual("2026-11-02")).rejects.toMatchObject({
       code: "VALIDATION_ERROR",

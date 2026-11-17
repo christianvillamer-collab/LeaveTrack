@@ -107,3 +107,12 @@ export function canRunAudit(subject: Subject): boolean {
 export function canConfigurePolicies(subject: Subject): boolean {
   return roleOf(subject) === "hr_admin";
 }
+
+/**
+ * Role gate for HR people administration. Record-level guards (self
+ * deactivation, last active HR admin, manager with reports, reporting cycles)
+ * stay in the transactional SQL.
+ */
+export function canManagePeople(subject: Subject): boolean {
+  return roleOf(subject) === "hr_admin";
+}

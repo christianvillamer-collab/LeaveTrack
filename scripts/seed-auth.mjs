@@ -119,8 +119,40 @@ async function run() {
     updated += 1;
   }
 
+  // Link each seeded provider identity to its employee row by subject. This is
+  // what lets HR change a directory email later without orphaning sign-in.
+  const authByIdentity = new Map(
+    (await listAllAuthUsers()).map((user) => [user.email?.toLowerCase(), user]),
+  );
+  let linked = 0;
+  let alreadyLinked = 0;
+
+  for (const employee of employees) {
+    const email = employee.email.trim();
+    const authUser = authByIdentity.get(email.toLowerCase());
+
+    if (!authUser) {
+      continue;
+    }
+
+    const rows = await sql`
+      update users
+      set auth_subject = ${authUser.id}
+      where lower(email) = ${email.toLowerCase()}
+        and auth_subject is null
+      returning id
+    `;
+
+    if (rows.length > 0) {
+      linked += 1;
+    } else {
+      alreadyLinked += 1;
+    }
+  }
+
   process.stdout.write(
-    `Auth seed complete: ${created} created, ${updated} updated, ${employees.length} employee row(s).\n`,
+    `Auth seed complete: ${created} created, ${updated} updated, ${employees.length} employee row(s). ` +
+      `Subject links: ${linked} added, ${alreadyLinked} already linked.\n`,
   );
 }
 

@@ -53,6 +53,19 @@ Rules:
   `scripts/migrate.mjs` refuse a `leavetrack_app` connection.
 - Do not edit `db/migrations/0003_db_authorization.sql` after it is applied. Add a new migration.
 
+## People admin tables (E2-09)
+
+`db/migrations/0005_people_admin.sql` extends the matrix without widening any other table:
+
+| Table            | `leavetrack_app` verbs | Notes                                                         |
+| ---------------- | ---------------------- | ------------------------------------------------------------- |
+| `users`          | SELECT, INSERT, UPDATE | Profile edits, manager assignment, status, bulk import.       |
+| `user_audit_log` | SELECT, INSERT         | Append-only; no UPDATE/DELETE grant, both triggers installed. |
+
+`users` still has no DELETE. Deactivation is an `is_active` flag, and the hard-delete invariant
+is unchanged. See `knowledge/patterns/people-admin.md` for the lifecycle and reporting-graph
+rules.
+
 ## Verification queries
 
 ```sql

@@ -20,9 +20,33 @@ insert into users (id, name, email, role, manager_id) values
   ('a0000000-0000-4000-8000-000000000010', 'Nina Petrov', 'nina.petrov@leavetrack.demo', 'employee', 'a0000000-0000-4000-8000-000000000002')
 on conflict (id) do nothing;
 
+-- Directory-only fields. Kept as a separate idempotent update so an existing
+-- database (whose users insert hits the conflict clause) still gains them.
+update users u
+set job_title = coalesce(u.job_title, v.job_title),
+    team = coalesce(u.team, v.team)
+from (values
+  ('a0000000-0000-4000-8000-000000000001'::uuid, 'Engineering Manager', 'Engineering'),
+  ('a0000000-0000-4000-8000-000000000002'::uuid, 'Operations Manager', 'Operations'),
+  ('a0000000-0000-4000-8000-000000000003'::uuid, 'People Operations Lead', 'People'),
+  ('a0000000-0000-4000-8000-000000000004'::uuid, 'Product Designer', 'Product'),
+  ('a0000000-0000-4000-8000-000000000005'::uuid, 'Backend Engineer', 'Engineering'),
+  ('a0000000-0000-4000-8000-000000000006'::uuid, 'Customer Success Manager', 'Customer Success'),
+  ('a0000000-0000-4000-8000-000000000007'::uuid, 'Finance Analyst', 'Finance'),
+  ('a0000000-0000-4000-8000-000000000008'::uuid, 'QA Engineer', 'Engineering'),
+  ('a0000000-0000-4000-8000-000000000009'::uuid, 'Support Specialist', 'Customer Success'),
+  ('a0000000-0000-4000-8000-000000000010'::uuid, 'Data Analyst', 'Operations')
+) as v(id, job_title, team)
+where u.id = v.id
+  and (u.job_title is null or u.team is null);
+
 -- Vacation and Sick accrue; Unpaid deliberately has no policy row (BR-07).
 -- Seeded rates are effective from 2000-01-01 so they apply to every period
 -- until HR records a newer effective-dated row.
+--
+-- Scope both demo inserts to the fixed seed ids. Now that HR can import real
+-- people, an unscoped re-run would hand demo policies and starting balances to
+-- every imported employee.
 insert into leave_policies (user_id, leave_type_id, accrual_per_month, effective_from)
 select u.id, t.id,
   case t.name when 'Vacation' then 1.25 else 1.00 end,
@@ -30,6 +54,18 @@ select u.id, t.id,
 from users u
 cross join leave_types t
 where t.tracks_balance = true
+  and u.id in (
+    'a0000000-0000-4000-8000-000000000001',
+    'a0000000-0000-4000-8000-000000000002',
+    'a0000000-0000-4000-8000-000000000003',
+    'a0000000-0000-4000-8000-000000000004',
+    'a0000000-0000-4000-8000-000000000005',
+    'a0000000-0000-4000-8000-000000000006',
+    'a0000000-0000-4000-8000-000000000007',
+    'a0000000-0000-4000-8000-000000000008',
+    'a0000000-0000-4000-8000-000000000009',
+    'a0000000-0000-4000-8000-000000000010'
+  )
 on conflict (user_id, leave_type_id, effective_from) do nothing;
 
 insert into leave_balances (user_id, leave_type_id, balance)
@@ -41,6 +77,18 @@ select u.id, t.id,
 from users u
 cross join leave_types t
 where t.tracks_balance = true
+  and u.id in (
+    'a0000000-0000-4000-8000-000000000001',
+    'a0000000-0000-4000-8000-000000000002',
+    'a0000000-0000-4000-8000-000000000003',
+    'a0000000-0000-4000-8000-000000000004',
+    'a0000000-0000-4000-8000-000000000005',
+    'a0000000-0000-4000-8000-000000000006',
+    'a0000000-0000-4000-8000-000000000007',
+    'a0000000-0000-4000-8000-000000000008',
+    'a0000000-0000-4000-8000-000000000009',
+    'a0000000-0000-4000-8000-000000000010'
+  )
 on conflict (user_id, leave_type_id) do nothing;
 
 insert into leave_requests

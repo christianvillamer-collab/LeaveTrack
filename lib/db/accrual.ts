@@ -88,6 +88,10 @@ export async function runAccrual(period: string): Promise<AccrualResult> {
       join leave_types t
         on t.id = e.leave_type_id
        and t.tracks_balance = true
+      -- Offboarded people keep their rate history but stop accruing.
+      join users u
+        on u.id = e.user_id
+       and u.is_active = true
       where e.days > 0
     ),
     recorded as (

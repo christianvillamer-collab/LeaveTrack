@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   configured: true,
   providerUser: null as null | {
+    id?: string;
     email?: string | null;
     email_confirmed_at?: string | null;
     user_metadata?: Record<string, unknown>;
@@ -15,9 +16,11 @@ const state = vi.hoisted(() => ({
     email: string;
     role: string;
     managerId: string | null;
+    isActive: boolean;
   },
   lookupCount: 0,
   lookedUpEmail: null as string | null,
+  lookedUpSubject: null as string | null,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -39,10 +42,11 @@ vi.mock("@/lib/auth/supabase", () => ({
 }));
 
 vi.mock("@/lib/db/users", () => ({
-  findUserByEmail: async (email: string) => {
+  resolveUserForIdentity: async (input: { subject: string | null; email: string }) => {
     state.lookupCount += 1;
-    state.lookedUpEmail = email;
-    return state.dbUser;
+    state.lookedUpEmail = input.email;
+    state.lookedUpSubject = input.subject;
+    return state.dbUser ? { user: state.dbUser, needsSubjectLink: false } : null;
   },
 }));
 
@@ -54,11 +58,13 @@ const linkedEmployee = {
   email: "maya.chen@leavetrack.demo",
   role: "employee",
   managerId: "manager-1",
+  isActive: true,
 };
 
 beforeEach(() => {
   state.configured = true;
   state.providerUser = {
+    id: "auth-user-1",
     email: "maya.chen@leavetrack.demo",
     email_confirmed_at: "2026-01-01T00:00:00.000Z",
   };
@@ -66,6 +72,7 @@ beforeEach(() => {
   state.dbUser = { ...linkedEmployee };
   state.lookupCount = 0;
   state.lookedUpEmail = null;
+  state.lookedUpSubject = null;
 });
 
 describe("getSession", () => {
@@ -78,6 +85,24 @@ describe("getSession", () => {
       managerId: "manager-1",
     });
     expect(state.lookedUpEmail).toBe("maya.chen@leavetrack.demo");
+    expect(state.lookedUpSubject).toBe("auth-user-1");
+  });
+
+  it("returns null for a deactivated employee row", async () => {
+    state.dbUser = { ...linkedEmployee, isActive: false };
+
+    await expect(getSession()).resolves.toBeNull();
+    expect(state.lookupCount).toBe(1);
+  });
+
+  it("still resolves by verified email when the provider has no subject", async () => {
+    state.providerUser = {
+      email: "maya.chen@leavetrack.demo",
+      email_confirmed_at: "2026-01-01T00:00:00.000Z",
+    };
+
+    await expect(getSession()).resolves.toMatchObject({ id: "user-1" });
+    expect(state.lookedUpSubject).toBeNull();
   });
 
   it("ignores provider role claims and keeps the DB role", async () => {

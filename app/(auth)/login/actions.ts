@@ -10,7 +10,7 @@ import {
   createSupabaseServerClient,
   isAuthConfigured,
 } from "@/lib/auth/supabase";
-import { findUserByEmail, type DbUser } from "@/lib/db/users";
+import { linkAuthSubject, resolveUserForIdentity } from "@/lib/db/users";
 import { logger } from "@/lib/logging/logger";
 
 const loginSchema = z.object({
@@ -28,6 +28,7 @@ const CREDENTIALS_ERROR = "Email or password is incorrect.";
 const UNCONFIRMED_ERROR =
   "Confirm your email address before signing in. Check your inbox for the link.";
 const UNLINKED_ERROR = "No employee record is linked to this account. Contact HR.";
+const DEACTIVATED_ERROR = "This account has been deactivated. Contact HR.";
 const UNAVAILABLE_ERROR = "We could not complete sign-in. Try again in a moment.";
 
 /**
@@ -90,19 +91,38 @@ export async function signIn(_previous: LoginState, formData: FormData): Promise
     return { error: CREDENTIALS_ERROR };
   }
 
-  let user: DbUser | null;
+  let identity: Awaited<ReturnType<typeof resolveUserForIdentity>>;
 
   try {
-    user = await findUserByEmail(verifiedEmail);
+    identity = await resolveUserForIdentity({
+      subject: signInData.user.id ?? null,
+      email: verifiedEmail,
+    });
   } catch (error) {
     logger.error({ err: error }, "auth.identity_lookup_failed");
     await supabase.auth.signOut().catch(() => undefined);
     return { error: UNAVAILABLE_ERROR };
   }
 
-  if (!user) {
+  if (!identity) {
     await supabase.auth.signOut().catch(() => undefined);
     return { error: UNLINKED_ERROR };
+  }
+
+  if (!identity.user.isActive) {
+    await supabase.auth.signOut().catch(() => undefined);
+    return { error: DEACTIVATED_ERROR };
+  }
+
+  // Bind the provider subject on first successful sign-in so a later HR email
+  // edit cannot orphan the account. A collision is logged, not fatal: the
+  // verified email already mapped to this row.
+  if (identity.needsSubjectLink && signInData.user.id) {
+    try {
+      await linkAuthSubject(identity.user.id, signInData.user.id);
+    } catch (error) {
+      logger.warn({ err: error }, "auth.subject_link_failed");
+    }
   }
 
   redirect(safeNextPath(next) ?? ROLE_HOME);

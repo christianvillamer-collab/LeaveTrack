@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 
 import type { Role } from "@/lib/auth/roles";
 import { createSupabaseServerClient, isAuthConfigured } from "@/lib/auth/supabase";
-import { findUserByEmail } from "@/lib/db/users";
+import { resolveUserForIdentity } from "@/lib/db/users";
 
 export interface Session {
   id: string;
@@ -14,10 +14,11 @@ export interface Session {
 }
 
 /**
- * Verifies the provider session, then maps the verified email to exactly one
- * `users` row. The provider proves *who* the user is; the DB row supplies the
- * id and role (ADR-E004). Unconfirmed or unlinked identities are treated as
- * unauthenticated.
+ * Verifies the provider session, then maps the provider subject (falling back
+ * to a verified email only for an unlinked row) to exactly one `users` row. The
+ * provider proves *who* the user is; the DB row supplies the id, role, and
+ * active state (ADR-E004). Unconfirmed, unlinked, or deactivated identities are
+ * treated as unauthenticated.
  */
 async function loadSession(): Promise<Session | null> {
   if (!isAuthConfigured()) {
@@ -37,11 +38,16 @@ async function loadSession(): Promise<Session | null> {
     return null;
   }
 
-  const user = await findUserByEmail(email);
+  const identity = await resolveUserForIdentity({
+    subject: data.user.id ?? null,
+    email,
+  });
 
-  if (!user) {
+  if (!identity || !identity.user.isActive) {
     return null;
   }
+
+  const user = identity.user;
 
   return {
     id: user.id,
