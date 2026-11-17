@@ -1,4 +1,5 @@
 import {
+  Bell,
   CalendarPlus,
   FileText,
   Inbox,
@@ -31,6 +32,7 @@ export function navSectionsFor(role: Role): NavSection[] {
     { href: "/requests", label: "My requests", icon: FileText },
     { href: "/requests/new", label: "Request leave", icon: CalendarPlus, exact: true },
     { href: "/balance", label: "My balance", icon: Wallet },
+    { href: "/notifications", label: "Notifications", icon: Bell },
   ];
 
   if (canManageRequests(role)) {

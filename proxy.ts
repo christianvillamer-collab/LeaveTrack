@@ -3,13 +3,18 @@ import { NextResponse, type NextRequest } from "next/server";
 import { ERROR_CODES, errorEnvelope } from "@/lib/api/errors";
 import { createSupabaseProxyClient, isAuthConfigured } from "@/lib/auth/supabase";
 
-// `/api/jobs/accrual` is the system cron route: it has no user session and
-// authenticates itself with CRON_SECRET, so it must never pay for a refresh.
+// `/api/jobs/accrual` and `/api/jobs/notifications` are the system cron routes:
+// they have no user session and authenticate themselves with CRON_SECRET, so
+// they must never pay for a refresh.
 // The `PUBLIC_AUTH_PATHS` routes can still carry a session, so the proxy
 // refreshes them: their pages read the session in a Server Component, where a
 // cookie write is swallowed, and a lost refresh-token rotation can revoke it.
 const PUBLIC_AUTH_PATHS = new Set(["/login", "/auth/callback", "/forbidden"]);
-const PUBLIC_SYSTEM_PATHS = new Set(["/api/health", "/api/jobs/accrual"]);
+const PUBLIC_SYSTEM_PATHS = new Set([
+  "/api/health",
+  "/api/jobs/accrual",
+  "/api/jobs/notifications",
+]);
 const ASSET_PATTERN = /\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|xml|woff2?)$/i;
 
 function isAsset(pathname: string): boolean {

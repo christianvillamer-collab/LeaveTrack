@@ -4,7 +4,7 @@
 
 Next.js 16 (App Router) + TypeScript + Tailwind v4 + Postgres/Supabase leave-management app.
 
-**Day 0 scaffold + TASK-011/012/013/014/015/016/017 + E2-02/03/05/06/07/08/09.** Sign-in uses
+**Day 0 scaffold + TASK-011/012/013/014/015/016/017 + E2-02/03/05/06/07/08/09/10.** Sign-in uses
 Supabase Auth (`@supabase/ssr`); the mock `mock-*` cookies are gone. The role-aware dashboard reads
 balances, requests, audit rows, policies, and accrual status from Postgres; `POST /api/leave-requests`
 and `/requests/new` write to Postgres, while `GET /api/leave-requests` + `/balance` + `/requests` +
@@ -62,9 +62,9 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   `next` values go through `lib/auth/safe-next-path.ts` (rejects `//`, absolute, `\`, control chars,
   `/login`). Sign-out uses `signOut({ scope: "local" })` so cookies clear before the revoke request.
 - Public auth pages (`/login`, `/auth/callback`, `/forbidden`) are reachable without a session but
-  are still refreshed in `proxy.ts`; only `/api/health` and `/api/jobs/accrual` bypass the session
-  read entirely. A Server Component cannot persist a rotated refresh token, so skipping that refresh
-  can revoke the session via reuse detection.
+  are still refreshed in `proxy.ts`; only `/api/health`, `/api/jobs/accrual`, and
+  `/api/jobs/notifications` bypass the session read entirely. A Server Component cannot persist a
+  rotated refresh token, so skipping that refresh can revoke the session via reuse detection.
 - The dashboard is DB-backed per role: employees read `getMyLeaveData`, managers read the
   SQL-scoped `getTeamLeaveData` queue, and HR reads the org-wide list, directory, policy snapshot,
   audit counts, and `getAccrualSummary()`. `/settings/policies` is DB-backed and read/write for HR.
@@ -76,7 +76,9 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   role are never an identity source; never trust a client-supplied `userId`.
 - Route handlers are `/api/health`, `GET`/`POST /api/leave-requests`,
   `POST /api/leave-requests/:id/decision`, `POST /api/leave-requests/:id/override`,
-  `POST /api/policies`, `GET /api/audit/:userId`, and `GET /auth/callback`. All
+  `POST /api/policies`, `GET /api/audit/:userId`, `GET /api/notifications`,
+  `POST /api/notifications/:id/read`, `POST /api/notifications/read-all`,
+  `GET`/`POST /api/jobs/accrual`, `GET`/`POST /api/jobs/notifications`, and `GET /auth/callback`. All
   API failures must go through `withApiHandler` + `AppError` and return
   `{ success:false, error:{ code, message } }`; use `successStatus: 201` for created resources.
   Dynamic routes receive `params` through the handler context. The `/auth/callback` redirect uses
@@ -118,17 +120,30 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   `DELETE`/`TRUNCATE`. `leave_policies` is `SELECT/INSERT/UPDATE`; `policy_audit_log` is
   `SELECT/INSERT` only. `db/migrations/0005_people_admin.sql` adds `SELECT/INSERT/UPDATE` on
   `users` and `SELECT/INSERT` on the append-only `user_audit_log` (`users` still has no `DELETE`).
+  `db/migrations/0006_notifications.sql` grants `SELECT/INSERT/UPDATE` on the append-only
+  `notifications` table (no `DELETE`).
   New tables must ship RLS + both policies + grants in the same migration, and
   new functions must revoke `EXECUTE` from `PUBLIC`/`anon`/`authenticated`. The app still connects
   as the owner (`postgres.<project>`), which bypasses RLS, so `lib/auth/policy.ts` and the scoped SQL
   remain the live gate. DB tests and `db:seed` need the owner role; `npm run test:db` writes and must
   never be pointed at a real project. See `knowledge/patterns/db-authorization.md` and
   `knowledge/patterns/people-admin.md`.
-- The accrual job (`GET`/`POST /api/jobs/accrual`) is the only unauthenticated non-health API path:
-  `proxy.ts` lets it through and the route requires `Authorization: Bearer $CRON_SECRET`. Vercel Cron
-  issues GET, so both verbs share one handler. Idempotency lives in `accrual_ledger`
+- The scheduled jobs (`GET`/`POST /api/jobs/accrual` and `GET`/`POST /api/jobs/notifications`) are
+  the only unauthenticated non-health API paths: `proxy.ts` lets them through and each route
+  requires `Authorization: Bearer $CRON_SECRET` (constant-time compare, 503 when unset). Vercel
+  Cron issues GET, so both verbs share one handler. Accrual idempotency lives in `accrual_ledger`
   (`user_id`, `leave_type_id`, `period`), never in `leave_balances.updated_at`. `/login`,
   `/auth/callback`, and `/forbidden` are also public (the callback has no session yet).
+- Notifications are a **transactional outbox** (`ADR-LeaveTrack-E2-10`): `enqueueNotifications(tx, …)`
+  writes `in_app` (status `sent`) and `email` (status `pending`) rows in the same transaction as the
+  submit/decision and its audit row. The unique key
+  `(event_type, leave_request_id, recipient_id, channel)` makes replays no-ops; never send mail
+  inside that transaction. A managerless submission notifies every active `hr_admin` (resolved in
+  SQL) while `managerNotified` stays `false`. Only `lib/notifications/worker.ts` calls a provider,
+  via a leased claim (`next_attempt_at`, `for update skip locked`), exponential backoff, and
+  `MAX_EMAIL_ATTEMPTS = 5`. `EMAIL_TRANSPORT=log` is the default; `resend` is a dependency-free
+  `fetch` adapter and a missing credential records `skipped`, not a retry. In-app reads are
+  recipient-scoped in SQL (a foreign id is 404). See `knowledge/patterns/notifications.md`.
 - Manager scope must be a **SQL predicate** (`WHERE manager_id = :current_user_id`), never a
   client-side filter or post-query array filter. See `knowledge/patterns/manager-scope.md`.
 
@@ -158,8 +173,9 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   `countLeaveDays` and the DB `end_date >= start_date` rule.
 - Over-balance is advisory (`lib/domain/leave.ts`): return a warning, still create the pending
   request, never deduct a balance at submission. Unpaid never warns.
-- Manager notification for submission is the pending row's `manager_id` visibility; there is no
-  email provider or notifications table yet (queue is TASK-013).
+- Manager notification for submission is the outbox row addressed to the pending request's
+  `manager_id` (or every active `hr_admin` when there is no manager); `/approvals` remains the
+  manager queue, and `/notifications` is the inbox. Never resolve a recipient from a request body.
 - Server components by default. `"use client"` only for state, effects, or event handlers.
 - Next 16 APIs are async: `await cookies()`, `await params`, `await searchParams`.
 - `tsconfig.json` intentionally uses `"jsx": "react-jsx"` — do not change it to `preserve`.

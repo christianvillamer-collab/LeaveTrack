@@ -314,3 +314,34 @@ export interface OrgLeaveOverview {
   requests: RequestSummary[];
   headcount: number;
 }
+
+/** Who an event is addressed to and how it is delivered. */
+export type NotificationEventType = "request_submitted" | "request_approved" | "request_rejected";
+
+export type NotificationChannel = "in_app" | "email";
+
+export type NotificationStatus = "pending" | "sent" | "failed" | "skipped";
+
+/** One row of the recipient's in-app notification list. */
+export interface NotificationItem {
+  id: string;
+  eventType: NotificationEventType;
+  subject: string;
+  body: string;
+  leaveRequestId: string;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export interface NotificationListResult {
+  items: NotificationItem[];
+  unreadCount: number;
+}
+
+/** Outcome of one delivery attempt batch from the notification cron job. */
+export interface NotificationJobResult {
+  processed: number;
+  sent: number;
+  failed: number;
+  skipped: number;
+}

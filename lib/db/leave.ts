@@ -1,10 +1,14 @@
 import "server-only";
 
+import type { TransactionSql } from "postgres";
+
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { Role } from "@/lib/auth/roles";
 import { getDb } from "@/lib/db/client";
 import { evaluateBalanceWarning } from "@/lib/domain/leave";
 import { listDirectReports } from "@/lib/db/users";
+import { enqueueNotifications } from "@/lib/db/notifications";
+import { buildNotificationCopy } from "@/lib/notifications/templates";
 import type {
   CreateLeaveRequestResult,
   LeaveBalance,
@@ -40,6 +44,7 @@ interface BalanceRow extends LeaveTypeRow {
 
 interface UserRow {
   id: string;
+  name: string;
   manager_id: string | null;
 }
 
@@ -105,6 +110,9 @@ interface DecisionRow {
   manager_id: string | null;
   leave_type_name: string;
   tracks_balance: boolean;
+  start_date: string;
+  end_date: string;
+  employee_name: string;
 }
 
 export interface CreateLeaveRequestInput {
@@ -518,6 +526,30 @@ interface ApplyDecisionOptions {
 }
 
 /**
+ * A submission with no manager goes to every active HR admin; the submit
+ * screen already tells the employee it is an HR review. Recipients are
+ * resolved in SQL, never taken from the request body.
+ */
+async function resolveSubmissionRecipients(
+  tx: TransactionSql,
+  managerId: string | null,
+): Promise<string[]> {
+  if (managerId) {
+    return [managerId];
+  }
+
+  const rows = await tx<{ id: string }[]>`
+    select id
+    from users
+    where role = 'hr_admin'
+      and is_active = true
+    order by name
+  `;
+
+  return rows.map((row) => row.id);
+}
+
+/**
  * One transactional decision path for managers and HR overrides. The lock →
  * relationship gate → pending check → balance decrement → status update →
  * audit insert sequence must not fork, or the two modes drift apart.
@@ -534,6 +566,9 @@ async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisi
         (r.end_date - r.start_date + 1)::int as days,
         r.status::text as status,
         e.manager_id,
+        r.start_date::text as start_date,
+        r.end_date::text as end_date,
+        e.name as employee_name,
         lt.name as leave_type_name,
         lt.tracks_balance
       from leave_requests r
@@ -635,6 +670,32 @@ async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisi
       )
     `;
 
+    // Same transaction as the decision: the outbox row either commits with it
+    // or not at all. Delivery is the cron worker's job.
+    const eventType = decision === "approved" ? "request_approved" : "request_rejected";
+    const copy = buildNotificationCopy({
+      eventType,
+      employeeName: row.employee_name,
+      actorName,
+      leaveTypeName: leaveType.name,
+      startDate: row.start_date,
+      endDate: row.end_date,
+      days,
+      note,
+      isOverride,
+    });
+
+    await enqueueNotifications(tx, [
+      {
+        recipientId: row.user_id,
+        actorId,
+        leaveRequestId: requestId,
+        eventType,
+        subject: copy.subject,
+        body: copy.body,
+      },
+    ]);
+
     return {
       request: {
         id: row.id,
@@ -715,7 +776,7 @@ export async function createLeaveRequest(
 
   return db.begin(async (tx) => {
     const [user] = await tx<UserRow[]>`
-      select id, manager_id
+      select id, name, manager_id
       from users
       where id = ${input.userId}
       limit 1
@@ -791,6 +852,32 @@ export async function createLeaveRequest(
         ${`Leave request submitted for ${formatDateRange(input.startDate, input.endDate)} (${formatDays(requestedDays)}).`}
       )
     `;
+
+    // The manager is notified here; with no manager the active HR admins are.
+    // Both channels are enqueued inside this transaction, never sent from it.
+    const recipients = await resolveSubmissionRecipients(tx, user.manager_id);
+    const copy = buildNotificationCopy({
+      eventType: "request_submitted",
+      employeeName: user.name,
+      actorName: user.name,
+      leaveTypeName: leaveType.name,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      days: requestedDays,
+      reason: input.reason,
+    });
+
+    await enqueueNotifications(
+      tx,
+      recipients.map((recipientId) => ({
+        recipientId,
+        actorId: input.userId,
+        leaveRequestId: inserted.id,
+        eventType: "request_submitted" as const,
+        subject: copy.subject,
+        body: copy.body,
+      })),
+    );
 
     return {
       request: {

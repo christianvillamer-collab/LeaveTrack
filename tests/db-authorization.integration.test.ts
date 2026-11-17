@@ -17,6 +17,7 @@ const TABLES = [
   "accrual_ledger",
   "policy_audit_log",
   "user_audit_log",
+  "notifications",
 ] as const;
 
 type Table = (typeof TABLES)[number];
@@ -33,6 +34,7 @@ const EXPECTED: Record<Table, Record<Privilege, boolean>> = {
   accrual_ledger: { SELECT: true, INSERT: true, UPDATE: false, DELETE: false },
   policy_audit_log: { SELECT: true, INSERT: true, UPDATE: false, DELETE: false },
   user_audit_log: { SELECT: true, INSERT: true, UPDATE: false, DELETE: false },
+  notifications: { SELECT: true, INSERT: true, UPDATE: true, DELETE: false },
 };
 
 const CLIENT_ROLES = ["anon", "authenticated"] as const;

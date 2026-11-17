@@ -17,9 +17,10 @@ export interface SidebarProps {
   name: string;
   email: string;
   role: Role;
+  unreadNotifications: number;
 }
 
-export function Sidebar({ name, email, role }: SidebarProps) {
+export function Sidebar({ name, email, role, unreadNotifications }: SidebarProps) {
   const pathname = usePathname();
   const sections = navSectionsFor(role);
 
@@ -54,6 +55,12 @@ export function Sidebar({ name, email, role }: SidebarProps) {
                     >
                       <Icon aria-hidden="true" className="size-5 shrink-0" />
                       <span className="truncate">{item.label}</span>
+                      {item.href === "/notifications" && unreadNotifications > 0 ? (
+                        <span className="bg-primary text-primary-foreground text-caption ml-auto rounded-full px-2 py-0.5 font-semibold">
+                          {unreadNotifications > 99 ? "99+" : unreadNotifications}
+                          <span className="sr-only"> unread notifications</span>
+                        </span>
+                      ) : null}
                     </Link>
                   </li>
                 );

@@ -4,6 +4,10 @@
     {
       "path": "/api/jobs/accrual",
       "schedule": "0 6 1 * *"
+    },
+    {
+      "path": "/api/jobs/notifications",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

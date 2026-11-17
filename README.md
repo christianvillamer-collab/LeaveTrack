@@ -4,10 +4,11 @@ Self-service leave requests, scoped manager approvals, and a three-year audit tr
 ~800-person organisation.
 
 This repository contains the **Day 0 production scaffold** plus the first Day 1 slices: TASK-011
-request submission, TASK-012 balance visibility, and TASK-013/014 manager queue + decisions, and
-E2-02 real authentication. Sign-in uses Supabase Auth; the remaining screens still render local
-fixtures. Submission, balances, the manager queue, approve/reject decisions, and the session's
-employee mapping use Postgres. The remaining DB-backed pages are future Day 1 tasks.
+request submission, TASK-012 balance visibility, TASK-013/014 manager queue + decisions, E2-02 real
+authentication, and E2-10 notifications. Sign-in uses Supabase Auth; the remaining screens still
+render local fixtures. Submission, balances, the manager queue, approve/reject decisions, the
+session's employee mapping, and the notification outbox use Postgres. The remaining DB-backed pages
+are future Day 1 tasks.
 
 ## Stack
 
@@ -103,8 +104,9 @@ npm run db:seed
 - The app builds and most pages render with no database configured.
 - Sign-in and every authenticated page need a Supabase Auth project plus a migrated DB, because the
   session maps the verified email to a `users` row.
-- `/requests/new`, `/balance`, `/audit`, `GET /api/leave-requests`, `POST /api/leave-requests`, and
-  `GET /api/audit/:userId` require a configured, migrated DB.
+- `/requests/new`, `/balance`, `/notifications`, `/requests`, `/audit`, `GET /api/leave-requests`,
+  `POST /api/leave-requests`, `GET /api/notifications`, and `GET /api/audit/:userId` require a
+  configured, migrated DB.
 - `/api/health` reports `database: "not_configured"` until a URL is present.
 - Migrations are tracked in `schema_migrations` and run in a transaction.
 - The seed uses fixed UUIDs and `ON CONFLICT DO NOTHING`, so it is safe to run repeatedly.
@@ -170,12 +172,12 @@ The request is created for the **DB user matched by the session email**; a clien
 `leave_balances` row for that leave type. It returns `warning.exceedsBalance = true` and still
 creates the pending request; Unpaid leave never warns and no balance is deducted at submission.
 
-**Manager notification** is the pending row becoming visible to the manager via
-`users.manager_id` (the scoped queue itself is TASK-013). The response reports
-`managerNotified`. No email provider or notifications table is part of this task.
+**Manager notification** is a transactional outbox row addressed to the pending request's manager
+(see “Notifications” below). The response still reports `managerNotified`, which means “a manager
+was assigned”, not “delivery succeeded”.
 
-`/settings/policies` is DB-backed and read/write for HR. `/requests`, `/balance`, the dashboard,
-and the `/approvals` queue are also DB-backed.
+`/settings/policies` is DB-backed and read/write for HR. `/requests`, `/balance`, `/notifications`,
+the dashboard, and the `/approvals` queue are also DB-backed.
 
 ## Balance API and page (TASK-012)
 
@@ -359,6 +361,37 @@ and the `/approvals` queue are also DB-backed.
   Both the page and the route use `canConfigurePolicies`; the policy snapshot and balance card read
   the rate effective today, while the accrual job reads the rate effective for its run month.
 
+## Notifications (E2-10)
+
+Submissions and decisions write to a durable outbox in the same transaction as the event, then
+deliver in-app immediately and email from a cron worker.
+
+- **Two rows per event.** `notifications` stores one `in_app` row (status `sent`, readable at once)
+  and one `email` row (status `pending`) per recipient. The unique key
+  `(event_type, leave_request_id, recipient_id, channel)` makes a replayed submit or decision a
+  no-op — nothing is rewritten or sent twice.
+- **Who is notified.** A submission goes to the owner's manager; with no manager it goes to every
+  active `hr_admin`, matching the “HR review” copy on the submit page. Approve/reject (including an
+  HR override) notifies the request owner. Inactive recipients are skipped in SQL.
+- **The transaction never sends email.** `POST /api/leave-requests` and the decision/override
+  routes only write rows. Delivery is `GET`/`POST /api/jobs/notifications`, a system route public
+  in `proxy.ts` and protected by `Authorization: Bearer $CRON_SECRET` (like the accrual job).
+- **Bounded retries.** The worker leases up to 25 due rows with `for update skip locked`, sends them
+  one at a time, and records `sent`, `failed` (exponential backoff, terminal after
+  `MAX_EMAIL_ATTEMPTS = 5`), or `skipped` (transport not configured). A bad address fails only its
+  own row. `vercel.json` schedules the job every 15 minutes; Hobby only allows daily crons, so use
+  Pro or an external scheduler there.
+- **Transport.** `EMAIL_TRANSPORT=log` is the default: it reports success and contacts nobody, so
+  local and demo environments need no provider. `EMAIL_TRANSPORT=resend` is a dependency-free
+  `fetch` adapter behind `EMAIL_API_KEY` + `EMAIL_FROM`; both stay server-side, and a missing value
+  records the row as `skipped` instead of retrying forever.
+- **In-app inbox.** `/notifications` lists the session user's `in_app` rows newest first, with
+  mark-read and mark-all-read; the sidebar and mobile header show an unread badge. Reads are
+  recipient-scoped in SQL, so a foreign notification id is a 404.
+
+`GET /api/notifications?limit=50` returns `{ items, unreadCount }`;
+`POST /api/notifications/:id/read` and `POST /api/notifications/read-all` update read state.
+
 ## Project structure
 
 ```
@@ -369,14 +402,19 @@ app/
     dashboard/           Role-aware overview
     requests/            My requests, new request, request detail
     balance/             DB-backed confirmed vs pending balances
+    notifications/       In-app notification inbox + mark-read
     approvals/           DB manager queue + decisions; HR override queue
     audit/               HR audit report (DB-backed, per employee)
     settings/policies/   HR effective-dated policy admin
+    settings/people/     HR directory, manager assignment, deactivation, import
     forbidden/           403 page
   api/health/            Health probe
   api/leave-requests/    GET/POST + [id]/decision + [id]/override
   api/policies/          POST /api/policies (HR policy rate upsert)
+  api/people/            HR profile/manager/status + bulk import
   api/audit/             GET /api/audit/:userId (HR admin only)
+  api/notifications/     GET list + [id]/read + read-all
+  api/jobs/              accrual + notification outbox cron routes
   globals.css            Tailwind v4 tokens + layered base styles
 components/
   ui/                    Design-system primitives
@@ -387,6 +425,7 @@ lib/
   auth/                  Roles, Supabase clients, session + identity mapping
   db/                    Lazy pooled client, DB users, leave-request service
   domain/                Pure leave rules (balance warning)
+  notifications/         Email transports, copy templates, outbox worker
   mock/                  legacy Day 0 fixtures (no page imports them)
   validation/            Zod request/decision/override/policy schemas
 db/migrations/           Postgres schema
@@ -403,18 +442,19 @@ proxy.ts                 Next 16 route guard (not middleware.ts)
   non-public route. The mock `mock-*` cookies and role selector are removed. Server components read
   the session with `getSession()`, which maps the verified email to the DB `users` row.
 - **Split data.** `GET`/`POST /api/leave-requests`, the decision and override routes,
-  `POST /api/policies`, `/requests/new`, `/balance`, `/requests`, `/requests/[id]`, the dashboard,
-  `/settings/policies`, and the manager + HR `/approvals` queues use Postgres. No page reads
-  `lib/mock/data.ts`.
+  `POST /api/policies`, `/requests/new`, `/balance`, `/notifications`, `/requests`, `/requests/[id]`,
+  the dashboard, `/settings/policies`, and the manager + HR `/approvals` queues use Postgres. No
+  page reads `lib/mock/data.ts`.
 - **Route handlers.** `/api/health`, `GET`/`POST /api/leave-requests`,
   `POST /api/leave-requests/:id/decision`, `POST /api/leave-requests/:id/override`,
-  `POST /api/policies`, `GET /api/audit/:userId`, `GET`/`POST /api/jobs/accrual`, and
-  `GET /auth/callback`.
+  `POST /api/policies`, `/api/people/*`, `GET /api/audit/:userId`, `GET /api/notifications`,
+  `POST /api/notifications/:id/read`, `POST /api/notifications/read-all`,
+  `GET`/`POST /api/jobs/accrual`, `GET`/`POST /api/jobs/notifications`, and `GET /auth/callback`.
 - **Manager queue scope.** `scope=team` is manager-only. It uses
   `WHERE employee.manager_id = :current_user_id`; employees and HR receive 403. HR override uses a
   separate org query and endpoint; it never widens the manager queue.
-- **No provider SDK beyond auth.** No email, storage, payments, or OAuth client beyond what Supabase
-  Auth provides.
+- **No provider SDK beyond auth.** Email is a plain `fetch` adapter behind `EMAIL_TRANSPORT`; there
+  is no email, storage, payments, or OAuth SDK beyond what Supabase Auth provides.
 
 The provider proves identity only. Authorization still uses the DB user row and SQL relationship
 scoping, never a provider claim or a cookie role.
