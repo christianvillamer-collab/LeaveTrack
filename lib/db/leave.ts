@@ -29,6 +29,9 @@ import {
   formatRequestReference,
 } from "@/lib/utils/format";
 
+/** Mirrors `leave_balances_balance_check` in migration 0007. */
+const MIN_OVERDRAWN_BALANCE = -10000;
+
 interface LeaveTypeRow {
   id: string;
   name: string;
@@ -521,6 +524,8 @@ interface ApplyDecisionOptions {
   decision: "approved" | "rejected";
   note: string | null;
   isOverride: boolean;
+  /** HR-only: permit a negative resulting balance instead of a 409 (E2-11). */
+  allowOverBalance: boolean;
   /** Relationship-specific gate; runs after the row lock, before status checks. */
   authorize: (row: DecisionRow) => void;
 }
@@ -552,10 +557,12 @@ async function resolveSubmissionRecipients(
 /**
  * One transactional decision path for managers and HR overrides. The lock →
  * relationship gate → pending check → balance decrement → status update →
- * audit insert sequence must not fork, or the two modes drift apart.
+ * audit insert sequence must not fork, or the two modes drift apart. Only the
+ * HR override path may cross a short balance; managers keep the 409.
  */
 async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisionResult> {
-  const { requestId, actorId, actorName, decision, note, isOverride, authorize } = options;
+  const { requestId, actorId, actorName, decision, note, isOverride, allowOverBalance, authorize } =
+    options;
 
   return getDb().begin(async (tx) => {
     const [row] = await tx<DecisionRow[]>`
@@ -596,6 +603,7 @@ async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisi
     });
     const days = Number(row.days);
     let balance: LeaveDecisionResult["balance"] = null;
+    let overBalance = false;
 
     if (decision === "approved" && leaveType.tracksBalance) {
       const [balanceRow] = await tx<{ balance: string }[]>`
@@ -609,21 +617,44 @@ async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisi
       const previous = Number(balanceRow?.balance ?? 0);
 
       if (!balanceRow || previous < days) {
+        if (!allowOverBalance) {
+          throw new AppError(
+            ERROR_CODES.CONFLICT,
+            "The employee's confirmed balance is lower than the requested days, so this request cannot be approved.",
+            409,
+          );
+        }
+
+        overBalance = true;
+      }
+
+      // An HR over-balance approval records the true (possibly negative)
+      // result; it never clamps the balance back to zero.
+      const next = previous - days;
+
+      if (next < MIN_OVERDRAWN_BALANCE) {
         throw new AppError(
           ERROR_CODES.CONFLICT,
-          "The employee's confirmed balance is lower than the requested days, so this request cannot be approved.",
+          "This approval would exceed the permitted overdrawn balance limit.",
           409,
         );
       }
 
-      const next = previous - days;
-
-      await tx`
-        update leave_balances
-        set balance = ${next}
-        where user_id = ${row.user_id}
-          and leave_type_id = ${leaveType.id}
-      `;
+      if (!balanceRow) {
+        // A tracked type should always have a row, but an HR over-balance
+        // approval must still record the result if one is missing.
+        await tx`
+          insert into leave_balances (user_id, leave_type_id, balance)
+          values (${row.user_id}, ${leaveType.id}, ${next})
+        `;
+      } else {
+        await tx`
+          update leave_balances
+          set balance = ${next}
+          where user_id = ${row.user_id}
+            and leave_type_id = ${leaveType.id}
+        `;
+      }
 
       balance = {
         leaveTypeId: leaveType.id,
@@ -644,10 +675,20 @@ async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisi
       where id = ${requestId}
     `;
 
+    // Distinct audit actions make overrides filterable without parsing the
+    // detail prefix (E2-11). Manager decisions keep the original values.
+    const auditAction = isOverride
+      ? decision === "approved"
+        ? "hr_override_approved"
+        : "hr_override_rejected"
+      : decision;
+
     const detail = isOverride
       ? decision === "approved"
         ? balance
-          ? `HR override — approved by ${actorName}: ${note}. ${leaveType.name} balance reduced by ${formatDays(days)} (${balance.previous} → ${balance.next}).`
+          ? overBalance
+            ? `HR override — approved by ${actorName}: ${note}. Over-balance approval: ${leaveType.name} balance reduced by ${formatDays(days)} (${balance.previous} → ${balance.next}).`
+            : `HR override — approved by ${actorName}: ${note}. ${leaveType.name} balance reduced by ${formatDays(days)} (${balance.previous} → ${balance.next}).`
           : `HR override — approved by ${actorName}: ${note}. No balance change.`
         : `HR override — rejected by ${actorName}: ${note}. No balance change.`
       : decision === "approved"
@@ -665,7 +706,7 @@ async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisi
       ) values (
         ${requestId},
         ${actorId},
-        ${decision},
+        ${auditAction},
         ${detail}
       )
     `;
@@ -723,6 +764,7 @@ export async function decideLeaveRequest(
     decision: input.decision,
     note,
     isOverride: false,
+    allowOverBalance: false,
     authorize: (row) => {
       if (row.manager_id !== input.managerId) {
         throw AppError.forbidden("You can only decide requests from your direct reports.");
@@ -732,8 +774,9 @@ export async function decideLeaveRequest(
 }
 
 /**
- * HR cross-team override. This bypasses the direct-manager relationship, never
- * the pending/duplicate or over-balance guards, and always requires a reason.
+ * HR cross-team override. This bypasses the direct-manager relationship and,
+ * for approvals only, the over-balance guard (E2-11). The pending/duplicate
+ * guards remain, and a reason is always required.
  */
 export async function overrideLeaveRequest(
   input: OverrideLeaveRequestInput,
@@ -751,6 +794,7 @@ export async function overrideLeaveRequest(
     decision: input.decision,
     note,
     isOverride: true,
+    allowOverBalance: true,
     authorize: (row) => {
       if (row.user_id === input.actorId) {
         throw AppError.forbidden("You cannot override a decision on your own request.");

@@ -124,7 +124,7 @@ export interface AuditEvent {
   requestReference: string;
   employee: AuditEventPerson;
   actor: AuditEventPerson;
-  action: "submitted" | "approved" | "rejected";
+  action: "submitted" | "approved" | "rejected" | "hr_override_approved" | "hr_override_rejected";
   occurredAt: string;
   detail: string;
 }

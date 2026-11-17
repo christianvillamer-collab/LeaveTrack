@@ -112,7 +112,7 @@ The app uses **RBAC + relationship-based scoping**, not RBAC alone. See `ADR-Lea
 - Resource scope is always a SQL predicate (`WHERE employee.manager_id = :current_user_id`), never a client-side filter.
 - The DB `users.role` is the source of truth; neither a provider claim nor a cookie role is trusted for authorization.
 - All page and route authorization checks call the pure `lib/auth/policy.ts` matrix (an `Actor` of DB `id` + `role` plus the record's scope). `lib/auth/access.ts` was deleted in E2-03; `/requests`, `/requests/[id]`, and the dashboard now use DB actors, and the dashboard's employee and manager branches read only their own rows.
-- HR override is a separate audited action, not a blanket "HR can do anything." `POST /api/leave-requests/:id/override` requires `override: true` plus a reason, refuses the actor's own request (403), and shares the decision transaction's pending/duplicate and balance guards. Over-balance approval stays 409 for HR until E2-11.
+- HR override is a separate audited action, not a blanket "HR can do anything." `POST /api/leave-requests/:id/override` requires `override: true` plus a reason, refuses the actor's own request (403), and shares the decision transaction's pending/duplicate guards. Since E2-11, HR approval may cross a short balance and stores the true (possibly negative) result with a distinct `hr_override_*` audit action; managers still receive 409.
 
 | Action                  | Employee  | Manager                   | HR Admin                       |
 | ----------------------- | --------- | ------------------------- | ------------------------------ |

@@ -123,3 +123,9 @@ and the behavioural denials (skipped when the session cannot `SET ROLE`, e.g. Su
 The suite is read-only and safe to run against the project. The CI `database` job repeats the static
 checks with psql. **Never run `npm run test:db` against a real project** — several suites write
 (balances, requests, append-only audit rows) and it needs the owner role, not `leavetrack_app`.
+
+When a migration widens a check constraint (E2-11), assert the installed definition from
+`pg_get_constraintdef(oid)`, not just that the migration file was applied. Likewise, append-only
+assertions must query `pg_trigger.tgname` (`audit_log_no_update`, `audit_log_no_hard_delete`); those
+trigger names are not the same as the functions they call (`prevent_audit_update`,
+`prevent_hard_delete`).

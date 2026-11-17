@@ -21,6 +21,12 @@ import { formatDateTime } from "@/lib/utils/format";
 
 type ActionFilter = "all" | AuditEvent["action"];
 
+function actionLabel(action: AuditEvent["action"]): string {
+  if (action === "hr_override_approved") return "HR override approved";
+  if (action === "hr_override_rejected") return "HR override rejected";
+  return action;
+}
+
 export function AuditExplorer({ events }: { events: AuditEvent[] }) {
   const [query, setQuery] = useState("");
   const [action, setAction] = useState<ActionFilter>("all");
@@ -76,6 +82,8 @@ export function AuditExplorer({ events }: { events: AuditEvent[] }) {
             <option value="submitted">Submitted</option>
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
+            <option value="hr_override_approved">HR override approved</option>
+            <option value="hr_override_rejected">HR override rejected</option>
           </Select>
         </div>
       </div>
@@ -122,15 +130,15 @@ export function AuditExplorer({ events }: { events: AuditEvent[] }) {
                     <TableCell>
                       <Badge
                         variant={
-                          event.action === "approved"
+                          event.action === "approved" || event.action === "hr_override_approved"
                             ? "success"
-                            : event.action === "rejected"
+                            : event.action === "rejected" || event.action === "hr_override_rejected"
                               ? "danger"
                               : "neutral"
                         }
                         className="capitalize"
                       >
-                        {event.action}
+                        {actionLabel(event.action)}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-foreground">{event.actor.name}</TableCell>
@@ -160,15 +168,15 @@ export function AuditExplorer({ events }: { events: AuditEvent[] }) {
                   </div>
                   <Badge
                     variant={
-                      event.action === "approved"
+                      event.action === "approved" || event.action === "hr_override_approved"
                         ? "success"
-                        : event.action === "rejected"
+                        : event.action === "rejected" || event.action === "hr_override_rejected"
                           ? "danger"
                           : "neutral"
                     }
                     className="capitalize"
                   >
-                    {event.action}
+                    {actionLabel(event.action)}
                   </Badge>
                 </div>
                 <p className="text-caption text-muted-foreground mt-2">{event.detail}</p>

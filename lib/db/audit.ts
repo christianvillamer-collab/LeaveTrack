@@ -75,7 +75,13 @@ function toRequestStatus(status: string): RequestStatus {
 }
 
 function toAuditAction(action: string): AuditEvent["action"] {
-  if (action === "submitted" || action === "approved" || action === "rejected") {
+  if (
+    action === "submitted" ||
+    action === "approved" ||
+    action === "rejected" ||
+    action === "hr_override_approved" ||
+    action === "hr_override_rejected"
+  ) {
     return action;
   }
 

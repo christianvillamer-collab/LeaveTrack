@@ -239,8 +239,8 @@ the dashboard, and the `/approvals` queue are also DB-backed.
 - **403** — caller is not a manager or the request owner is not the caller’s direct report.
 - **404** — request does not exist or is soft-deleted.
 - **409** — already decided, or the employee’s confirmed balance is lower than the requested days.
-  Over-balance approval, including through the HR override path, is E2-11; the scaffold never clamps
-  a balance silently.
+  Only the manager path enforces that over-balance guard; E2-11 lets HR override cross it without
+  clamping the balance silently.
 - **Unpaid** — its leave type has `tracks_balance = false` (and no policy or balance rows are
   seeded), so submission skips the balance lookup entirely and approval succeeds with no balance
   change.
@@ -261,8 +261,9 @@ the dashboard, and the `/approvals` queue are also DB-backed.
 - HR can act on any pending request, but never their own (403). Pending/duplicate requests stay 409.
 - The override shares `decideLeaveRequest`'s transaction: approve decrements only the tracked balance,
   `decided_by` is the HR actor, `decision_note` stores the reason, and an audit row is written with a
-  detail prefixed `HR override`. No schema change is needed; the distinct audit action is E2-11.
-- Over-balance approval still returns 409 for everyone in E2-07; E2-11 owns the negative-balance path.
+  detail prefixed `HR override` and a distinct `hr_override_approved`/`hr_override_rejected` action.
+- Unlike the manager path, HR approval of an over-balance request succeeds and stores the true
+  (possibly negative) balance; the audit detail records the before → after transition (E2-11).
 - HR reads the org-wide queue through `listOrgLeaveRequests()`. The manager queue's
   `WHERE employee.manager_id = :current_user_id` predicate is unchanged, and `scope=team` still
   returns 403 for HR.

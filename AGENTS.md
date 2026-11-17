@@ -86,10 +86,12 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
 - Decisions are manager-only and transactional: lock the request, verify the owner’s `manager_id`,
   reject non-pending/duplicate decisions with 409, decrement only tracked leave types on approve,
   require a reject reason, and insert the append-only audit row in the same transaction. Over-balance
-  approval is 409 (HR over-balance is E2-11); Unpaid approval skips the balance.
+  approval is 409 (E2-11 lets HR override cross the balance); Unpaid approval skips the balance.
 - HR override is a separate transactional path (`overrideLeaveRequest`) sharing the decision helper:
   HR role only, `override: true` plus a 3–2000 char reason required for approve and reject, never the
   actor’s own request (403), pending/duplicate 409, and an audit detail prefixed `HR override`.
+  Unlike the manager path, HR approval may cross a short balance and stores the true (possibly
+  negative) result with a distinct `hr_override_approved` audit action (E2-11).
   `listOrgLeaveRequests()` backs the HR queue; the manager `WHERE manager_id = :current_user_id`
   predicate is unchanged and `scope=team` stays manager-only.
 - Balance reads use `getMyLeaveData`/`getBalancesForUser`: confirmed from `leave_balances`, pending
@@ -172,7 +174,9 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
 - Validate at boundaries with Zod (`lib/validation/`). Dates are inclusive; reuse
   `countLeaveDays` and the DB `end_date >= start_date` rule.
 - Over-balance is advisory (`lib/domain/leave.ts`): return a warning, still create the pending
-  request, never deduct a balance at submission. Unpaid never warns.
+  request, never deduct a balance at submission. Unpaid never warns. Manager approval of an
+  over-balance request is 409; HR override alone may approve it and store the true (possibly
+  negative) balance, with a distinct `hr_override_*` audit action (E2-11).
 - Manager notification for submission is the outbox row addressed to the pending request's
   `manager_id` (or every active `hr_admin` when there is no manager); `/approvals` remains the
   manager queue, and `/notifications` is the inbox. Never resolve a recipient from a request body.
