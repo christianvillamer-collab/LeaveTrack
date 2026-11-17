@@ -652,8 +652,9 @@ function HrDashboard({ data }: { data: HrViewData }) {
         <CardHeader>
           <CardTitle>Workspace composition</CardTitle>
           <CardDescription>
-            {org.headcount.toLocaleString("en-GB")} {org.headcount === 1 ? "account" : "accounts"}{" "}
-            with their manager assignment.
+            {org.headcount.toLocaleString("en-GB")}{" "}
+            {org.headcount === 1 ? "active account" : "active accounts"} with their manager
+            assignment.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">

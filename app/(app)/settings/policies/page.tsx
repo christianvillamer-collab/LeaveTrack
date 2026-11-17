@@ -49,7 +49,9 @@ export default async function PoliciesPage() {
 
   try {
     [directory, leaveTypes, overview, changes, accrual] = await Promise.all([
-      listDirectory(),
+      // The rate picker must include deactivated people: HR may still need to
+      // correct a historical rate for someone who has since left.
+      listDirectory({ includeInactive: true }),
       listLeaveTypes(),
       listPolicyOverview(),
       listPolicyChangeLog(10),

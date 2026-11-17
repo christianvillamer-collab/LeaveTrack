@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   ScrollText,
   Settings2,
+  Users,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
@@ -44,6 +45,7 @@ export function navSectionsFor(role: Role): NavSection[] {
       items: [
         { href: "/audit", label: "Audit log", icon: ScrollText },
         { href: "/settings/policies", label: "Leave policies", icon: Settings2 },
+        { href: "/settings/people", label: "People", icon: Users },
       ],
     });
   }

@@ -4,6 +4,7 @@ import {
   canConfigurePolicies,
   canDecideRequest,
   canDecideTeamRequests,
+  canManagePeople,
   canManageRequests,
   canOverrideRequest,
   canOverrideRequests,
@@ -170,6 +171,12 @@ describe("action gates", () => {
     expect(canConfigurePolicies(employee)).toBe(false);
   });
 
+  it("limits people administration to HR", () => {
+    expect(canManagePeople(hr)).toBe(true);
+    expect(canManagePeople(manager)).toBe(false);
+    expect(canManagePeople(employee)).toBe(false);
+  });
+
   it("accepts a bare role string for role-only gates", () => {
     expect(canViewTeam("manager")).toBe(true);
     expect(canDecideTeamRequests("manager")).toBe(true);
@@ -178,6 +185,8 @@ describe("action gates", () => {
     expect(canManageRequests("hr_admin")).toBe(true);
     expect(canRunAudit("hr_admin")).toBe(true);
     expect(canConfigurePolicies("hr_admin")).toBe(true);
+    expect(canManagePeople("hr_admin")).toBe(true);
+    expect(canManagePeople("manager")).toBe(false);
     expect(canRunAudit("manager")).toBe(false);
     expect(canManageRequests("employee")).toBe(false);
   });

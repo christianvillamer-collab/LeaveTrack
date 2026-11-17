@@ -4,7 +4,7 @@
 
 Next.js 16 (App Router) + TypeScript + Tailwind v4 + Postgres/Supabase leave-management app.
 
-**Day 0 scaffold + TASK-011/012/013/014/015/016/017 + E2-02/03/05/06/07/08.** Sign-in uses
+**Day 0 scaffold + TASK-011/012/013/014/015/016/017 + E2-02/03/05/06/07/08/09.** Sign-in uses
 Supabase Auth (`@supabase/ssr`); the mock `mock-*` cookies are gone. The role-aware dashboard reads
 balances, requests, audit rows, policies, and accrual status from Postgres; `POST /api/leave-requests`
 and `/requests/new` write to Postgres, while `GET /api/leave-requests` + `/balance` + `/requests` +
@@ -12,7 +12,8 @@ and `/requests/new` write to Postgres, while `GET /api/leave-requests` + `/balan
 `POST /api/leave-requests/:id/decision`, HR can override any pending request through
 `POST /api/leave-requests/:id/override`, and HR reads per-employee reports through
 `GET /api/audit/:userId` + `/audit`. HR sets effective-dated policy rates through
-`POST /api/policies` + `/settings/policies`. A monthly cron job accrues balances through
+`POST /api/policies` + `/settings/policies`, and manages people through `/settings/people` +
+`POST /api/people/*`. A monthly cron job accrues balances through
 `GET`/`POST /api/jobs/accrual`. Every application screen is DB-backed; do not reintroduce
 `lib/mock/data.ts` into a page.
 
@@ -115,11 +116,14 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   `AS RESTRICTIVE` RLS deny policies (a permissive deny would be OR'd away by a future allow
   policy); `leavetrack_app` is the server-only `NOBYPASSRLS` target with verb-level grants and no
   `DELETE`/`TRUNCATE`. `leave_policies` is `SELECT/INSERT/UPDATE`; `policy_audit_log` is
-  `SELECT/INSERT` only. New tables must ship RLS + both policies + grants in the same migration, and
+  `SELECT/INSERT` only. `db/migrations/0005_people_admin.sql` adds `SELECT/INSERT/UPDATE` on
+  `users` and `SELECT/INSERT` on the append-only `user_audit_log` (`users` still has no `DELETE`).
+  New tables must ship RLS + both policies + grants in the same migration, and
   new functions must revoke `EXECUTE` from `PUBLIC`/`anon`/`authenticated`. The app still connects
   as the owner (`postgres.<project>`), which bypasses RLS, so `lib/auth/policy.ts` and the scoped SQL
   remain the live gate. DB tests and `db:seed` need the owner role; `npm run test:db` writes and must
-  never be pointed at a real project. See `knowledge/patterns/db-authorization.md`.
+  never be pointed at a real project. See `knowledge/patterns/db-authorization.md` and
+  `knowledge/patterns/people-admin.md`.
 - The accrual job (`GET`/`POST /api/jobs/accrual`) is the only unauthenticated non-health API path:
   `proxy.ts` lets it through and the route requires `Authorization: Bearer $CRON_SECRET`. Vercel Cron
   issues GET, so both verbs share one handler. Idempotency lives in `accrual_ledger`

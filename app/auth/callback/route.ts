@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { ROLE_HOME } from "@/lib/auth/roles";
 import { safeNextPath } from "@/lib/auth/safe-next-path";
 import { createSupabaseServerClient, isAuthConfigured } from "@/lib/auth/supabase";
-import { findUserByEmail } from "@/lib/db/users";
+import { linkAuthSubject, resolveUserForIdentity } from "@/lib/db/users";
 import { logger } from "@/lib/logging/logger";
 
 export const runtime = "nodejs";
@@ -51,10 +51,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  let user;
+  let identity: Awaited<ReturnType<typeof resolveUserForIdentity>>;
 
   try {
-    user = await findUserByEmail(email);
+    identity = await resolveUserForIdentity({
+      subject: data.user?.id ?? null,
+      email,
+    });
   } catch (error) {
     logger.error({ err: error }, "auth.callback_identity_lookup_failed");
     await supabase.auth.signOut().catch(() => undefined);
@@ -62,12 +65,26 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (!user) {
+  if (!identity) {
     await supabase.auth.signOut().catch(() => undefined);
     // `/forbidden` requires a session, so a signed-out identity there would
     // bounce to `/login` with no explanation. Surface the reason instead.
     loginUrl.searchParams.set("error", "unlinked");
     return NextResponse.redirect(loginUrl);
+  }
+
+  if (!identity.user.isActive) {
+    await supabase.auth.signOut().catch(() => undefined);
+    loginUrl.searchParams.set("error", "deactivated");
+    return NextResponse.redirect(loginUrl);
+  }
+
+  if (identity.needsSubjectLink && data.user?.id) {
+    try {
+      await linkAuthSubject(identity.user.id, data.user.id);
+    } catch (error) {
+      logger.warn({ err: error }, "auth.subject_link_failed");
+    }
   }
 
   const destination = safeNextPath(request.nextUrl.searchParams.get("next")) ?? ROLE_HOME;

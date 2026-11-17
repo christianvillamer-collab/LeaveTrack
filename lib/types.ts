@@ -277,6 +277,38 @@ export interface DirectoryEntry {
   managerName: string | null;
 }
 
+/** Who changed a people record and what kind of change it was. */
+export type UserAuditAction =
+  "profile_updated" | "manager_reassigned" | "deactivated" | "reactivated" | "imported";
+
+/**
+ * The HR people-admin row. Wider than `DirectoryEntry` (which backs the
+ * dashboard and policy pages) because people admin also needs the directory
+ * fields, deactivation state, and whether a sign-in identity is linked.
+ */
+export interface PersonDirectoryEntry {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  managerId: string | null;
+  managerName: string | null;
+  jobTitle: string | null;
+  team: string | null;
+  isActive: boolean;
+  deactivatedAt: string | null;
+  authSubjectLinked: boolean;
+}
+
+export interface PersonAuditEntry {
+  id: string;
+  action: UserAuditAction;
+  detail: string | null;
+  actorName: string;
+  subjectName: string;
+  createdAt: string;
+}
+
 /** Org-wide request list plus headcount, the two inputs HR totals need. */
 export interface OrgLeaveOverview {
   requests: RequestSummary[];
