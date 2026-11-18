@@ -164,6 +164,14 @@ export interface AuditReport {
   events: AuditEvent[];
 }
 
+/** Optional inclusive UTC calendar bounds applied to an audit report. */
+export interface AuditDateRange {
+  /** Inclusive start date (`YYYY-MM-DD`). */
+  from?: string;
+  /** Inclusive end date (`YYYY-MM-DD`). */
+  to?: string;
+}
+
 export interface LeaveRequestWarning {
   exceedsBalance: boolean;
   requestedDays: number;
