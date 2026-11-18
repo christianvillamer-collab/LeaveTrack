@@ -7,6 +7,8 @@ export interface EmailMessage {
   to: string;
   subject: string;
   text: string;
+  /** Designed HTML alternative; the text part is always sent alongside it. */
+  html?: string;
 }
 
 export interface EmailTransport {
@@ -60,6 +62,7 @@ const resendTransport: EmailTransport = {
         to: message.to,
         subject: message.subject,
         text: message.text,
+        ...(message.html ? { html: message.html } : {}),
       }),
     });
 

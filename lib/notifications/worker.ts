@@ -28,6 +28,7 @@ export async function runNotificationOutbox(
         to: row.recipientEmail,
         subject: row.subject,
         text: row.body,
+        html: row.htmlBody ?? undefined,
       });
 
       await recordEmailResult(row.id, { ok: true });
