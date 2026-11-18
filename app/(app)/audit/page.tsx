@@ -15,40 +15,53 @@ import { requirePolicy } from "@/lib/auth/session";
 import { getAuditReport } from "@/lib/db/audit";
 import { getAccrualSummary } from "@/lib/db/accrual";
 import { listEmployees, type EmployeeDirectoryEntry } from "@/lib/db/users";
-import type { AccrualSummary, AuditReport } from "@/lib/types";
+import type { AccrualSummary, AuditReport, PaginationMeta } from "@/lib/types";
 import { formatDate } from "@/lib/utils/format";
 import { resolveAuditReportQuery } from "@/lib/validation/audit";
+import { toPaginationMeta, type SearchParamValue } from "@/lib/validation/list";
 
 export const metadata = { title: "Audit log" };
 
 export default async function AuditPage({
   searchParams,
 }: {
-  searchParams: Promise<{ employee?: string; from?: string; to?: string }>;
+  searchParams: Promise<{
+    employee?: SearchParamValue;
+    from?: SearchParamValue;
+    to?: SearchParamValue;
+    status?: SearchParamValue;
+    page?: SearchParamValue;
+    pageSize?: SearchParamValue;
+    exportAll?: SearchParamValue;
+  }>;
 }) {
   await requirePolicy(canRunAudit);
 
-  const { employee: requestedEmployee, from: requestedFrom, to: requestedTo } = await searchParams;
+  const params = await searchParams;
+  const requestedEmployee = params.employee;
+  const requestedFrom = params.from;
+  const requestedTo = params.to;
+  const requestedStatus = params.status;
 
-  const resolved = resolveAuditReportQuery({
-    employee: requestedEmployee,
-    from: requestedFrom,
-    to: requestedTo,
-  });
+  const resolved = resolveAuditReportQuery(params);
   // Invalid input produces no query at all, so it can never broaden the report.
   const query = resolved.valid ? resolved.query : null;
   const validationMessage = resolved.valid ? null : resolved.error;
 
   // Keep the raw submissions on failure so the form stays usable for correction.
-  const fromDefault = query ? (query.from ?? "") : (requestedFrom ?? "");
-  const toDefault = query ? (query.to ?? "") : (requestedTo ?? "");
+  const raw = (value: SearchParamValue) => (typeof value === "string" ? value : "");
+  const fromDefault = query ? (query.from ?? "") : raw(requestedFrom);
+  const toDefault = query ? (query.to ?? "") : raw(requestedTo);
+  const statusDefault = query ? (query.status ?? "") : raw(requestedStatus);
   const reportFrom = query?.from;
   const reportTo = query?.to;
+  const reportStatus = query?.status;
 
   let databaseUnavailable = false;
   let employees: EmployeeDirectoryEntry[] = [];
   let report: AuditReport | null = null;
   let selectedEmployeeId: string | undefined;
+  let pagination: PaginationMeta = toPaginationMeta(0, query?.page ?? 1, query?.pageSize ?? 25);
   let accrual: AccrualSummary = {
     lastPeriod: null,
     lastRunAt: null,
@@ -65,7 +78,18 @@ export default async function AuditPage({
         : employees[0]?.id;
 
     if (query && selectedEmployeeId) {
-      report = await getAuditReport(selectedEmployeeId, { from: query.from, to: query.to });
+      const nextReport = await getAuditReport(selectedEmployeeId, {
+        from: query.from,
+        to: query.to,
+        status: query.status,
+        page: query.page,
+        pageSize: query.pageSize,
+        exportAll: false,
+      });
+      if (nextReport) {
+        report = nextReport;
+        pagination = nextReport.pagination;
+      }
     }
 
     accrual = await getAccrualSummary();
@@ -77,7 +101,7 @@ export default async function AuditPage({
     }
   }
 
-  const employeeDefault = query ? (selectedEmployeeId ?? "") : (requestedEmployee ?? "");
+  const employeeDefault = query ? (selectedEmployeeId ?? "") : raw(requestedEmployee);
 
   const requests = report?.requests ?? [];
   const pending = requests.filter((request) => request.status === "pending");
@@ -160,6 +184,23 @@ export default async function AuditPage({
                     className="w-full max-w-full min-w-0 sm:w-40"
                   />
                 </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="audit-status" className="text-caption text-muted-foreground">
+                    Status
+                  </label>
+                  <Select
+                    id="audit-status"
+                    name="status"
+                    defaultValue={statusDefault}
+                    key={statusDefault}
+                    className="w-full max-w-full min-w-0 sm:w-40"
+                  >
+                    <option value="">All statuses</option>
+                    <option value="pending">Pending</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                  </Select>
+                </div>
                 <Button type="submit" size="sm">
                   View report
                 </Button>
@@ -235,10 +276,13 @@ export default async function AuditPage({
                 </CardHeader>
                 <CardContent>
                   <AuditExplorer
-                    key={`${selectedEmployeeId ?? ""}:${reportFrom ?? ""}:${reportTo ?? ""}`}
+                    key={`${selectedEmployeeId ?? ""}:${reportFrom ?? ""}:${reportTo ?? ""}:${reportStatus ?? ""}:${pagination.page}`}
                     events={events}
+                    employeeId={selectedEmployeeId ?? ""}
                     from={reportFrom}
                     to={reportTo}
+                    status={reportStatus}
+                    pagination={pagination}
                   />
                 </CardContent>
               </Card>

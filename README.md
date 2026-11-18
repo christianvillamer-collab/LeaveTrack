@@ -179,46 +179,49 @@ was assigned”, not “delivery succeeded”.
 `/settings/policies` is DB-backed and read/write for HR. `/requests`, `/balance`, `/notifications`,
 the dashboard, and the `/approvals` queue are also DB-backed.
 
-## Balance API and page (TASK-012)
+## Leave request list API and balance page (TASK-012)
 
-`GET /api/leave-requests?scope=mine` returns the authenticated DB user's data:
+`GET /api/leave-requests` returns a page of requests in the standard success envelope:
 
 ```json
 {
-  "balances": [
-    {
-      "leaveType": { "id": "…", "name": "Vacation", "tracksBalance": true },
-      "confirmed": 12.5,
-      "pending": 5,
-      "accrualPerMonth": 1.25,
-      "lastAccruedAt": null
-    }
-  ],
-  "requests": [
-    {
-      "id": "…",
-      "leaveType": { "id": "…", "name": "Vacation", "tracksBalance": true },
-      "startDate": "2026-11-16",
-      "endDate": "2026-11-20",
-      "days": 5,
-      "status": "pending",
-      "createdAt": "2026-11-01T09:12:00.000Z"
-    }
-  ]
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "id": "…",
+        "reference": "…",
+        "leaveType": { "id": "…", "name": "Vacation", "tracksBalance": true },
+        "startDate": "2026-11-16",
+        "endDate": "2026-11-20",
+        "days": 5,
+        "status": "pending",
+        "createdAt": "2026-11-01T09:12:00.000Z"
+      }
+    ],
+    "pagination": { "page": 1, "pageSize": 25, "total": 1, "pageCount": 1 }
+  }
 }
 ```
 
-- `scope=mine` returns the authenticated user's data. `scope=team` is manager-only and returns the
-  manager's direct reports + their active requests; employees/HR receive 403.
-- Confirmed balances come from `leave_balances`; pending is the sum of active pending requests per
-  leave type. Pending is never folded into confirmed.
-- `lastAccruedAt` is the latest `accrual_ledger.created_at` for that leave type, or `null` when no
-  accrual has run. Approving a request no longer moves it, and untracked types (Unpaid) are always
-  `null`.
-- `/balance` uses the same `getMyLeaveData` service server-side; the GET route serves API clients.
-- `/requests`, `/requests/[id]`, and the role-aware dashboard are DB-backed. The `/approvals` queue
-  is DB-backed for managers and now supports approve/reject; HR gets a separate cross-team override
-  queue at `/approvals`.
+Query parameters:
+
+- `scope=mine` (default) returns the authenticated DB user's requests. `scope=team` is
+  manager-only and returns direct reports' requests; other roles receive 403.
+- `status=pending|approved|rejected` filters in Postgres. Invalid or repeated values are
+  rejected with the standard 400 error envelope.
+- `page` (default `1`) and `pageSize` (default `25`, max `100`) are validated the same way:
+  invalid values fail closed instead of falling back to an unbounded query.
+- Rows are ordered `created_at desc, id desc` so paging is stable.
+
+Balances are not part of this response. `/balance` reads balances and pending totals with
+`getMyLeaveData` server-side; confirmed balances come from `leave_balances`, pending is the
+sum of active pending requests per leave type, and `lastAccruedAt` is the latest
+`accrual_ledger.created_at` (or `null` before the first accrual and for untracked types).
+
+`/requests`, `/requests/[id]`, and the role-aware dashboard are DB-backed. The `/approvals`
+queue is DB-backed for managers and supports approve/reject; HR gets a separate cross-team
+override queue at `/approvals`.
 
 ## Approve/reject decisions (TASK-014)
 

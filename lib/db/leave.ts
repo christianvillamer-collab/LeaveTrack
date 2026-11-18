@@ -5,6 +5,8 @@ import type { TransactionSql } from "postgres";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { Role } from "@/lib/auth/roles";
 import { getDb } from "@/lib/db/client";
+
+type Db = ReturnType<typeof getDb>;
 import { evaluateBalanceWarning } from "@/lib/domain/leave";
 import { listDirectReports } from "@/lib/db/users";
 import { enqueueNotifications } from "@/lib/db/notifications";
@@ -14,14 +16,17 @@ import type {
   LeaveBalance,
   LeaveDecisionResult,
   LeaveRequestDetail,
+  LeaveRequestListOptions,
   LeaveType,
   MyLeaveData,
   MyLeaveRequest,
+  Paginated,
   RequestStatus,
   RequestSummary,
   TeamLeaveData,
   TeamLeaveRequest,
 } from "@/lib/types";
+import { toPaginationMeta } from "@/lib/validation/list";
 import {
   countLeaveDays,
   formatDateRange,
@@ -57,6 +62,7 @@ interface InsertedRequestRow {
 }
 
 interface MyLeaveRequestRow {
+  total: number;
   id: string;
   start_date: string;
   end_date: string;
@@ -187,6 +193,56 @@ function toRequestStatus(status: string): RequestStatus {
   throw new AppError(ERROR_CODES.INTERNAL_ERROR, "A leave request has an unsupported status.", 500);
 }
 
+interface RequestQueryOptions {
+  status?: RequestStatus;
+  page?: number;
+  pageSize?: number;
+}
+
+function listBounds(options?: RequestQueryOptions) {
+  const page = options?.page;
+  const pageSize = options?.pageSize;
+  const paged = page !== undefined && pageSize !== undefined;
+
+  return {
+    status: options?.status ?? null,
+    limit: paged ? pageSize : null,
+    offset: paged ? (page - 1) * pageSize : null,
+  };
+}
+
+/**
+ * Count queries reuse the exact row WHERE fragments. `count(*) over ()` cannot
+ * report a total when OFFSET returns zero rows, so an empty page falls back to
+ * one of these counts with the same predicates.
+ */
+function myRequestFilter(db: Db, userId: string, status: RequestStatus | null) {
+  return db`
+    r.user_id = ${userId}
+    and r.is_deleted = false
+    and (${status}::request_status is null or r.status = ${status}::request_status)
+  `;
+}
+
+function teamRequestFilter(db: Db, managerId: string, status: RequestStatus | null) {
+  return db`
+    e.manager_id = ${managerId}
+    and r.is_deleted = false
+    and (${status}::request_status is null or r.status = ${status}::request_status)
+  `;
+}
+
+function orgRequestFilter(db: Db, status: RequestStatus | null) {
+  return db`
+    r.is_deleted = false
+    and (${status}::request_status is null or r.status = ${status}::request_status)
+  `;
+}
+
+function rowPagination(total: number, options: LeaveRequestListOptions) {
+  return toPaginationMeta(total, options.page, options.pageSize);
+}
+
 export async function getBalancesForUser(userId: string): Promise<LeaveBalance[]> {
   const rows = await getDb()<BalanceRow[]>`
     select
@@ -247,26 +303,8 @@ export async function getBalancesForUser(userId: string): Promise<LeaveBalance[]
   }));
 }
 
-export async function listMyLeaveRequests(userId: string): Promise<MyLeaveRequest[]> {
-  const rows = await getDb()<MyLeaveRequestRow[]>`
-    select
-      r.id,
-      r.start_date::text as start_date,
-      r.end_date::text as end_date,
-      (r.end_date - r.start_date + 1)::int as days,
-      r.status::text as status,
-      r.created_at,
-      lt.id as leave_type_id,
-      lt.name as leave_type_name,
-      lt.tracks_balance
-    from leave_requests r
-    join leave_types lt on lt.id = r.leave_type_id
-    where r.user_id = ${userId}
-      and r.is_deleted = false
-    order by r.created_at desc
-  `;
-
-  return rows.map((row) => ({
+function toMyLeaveRequest(row: MyLeaveRequestRow): MyLeaveRequest {
+  return {
     id: row.id,
     reference: formatRequestReference(row.id),
     leaveType: toLeaveType({
@@ -279,7 +317,64 @@ export async function listMyLeaveRequests(userId: string): Promise<MyLeaveReques
     days: Number(row.days),
     status: toRequestStatus(row.status),
     createdAt: row.created_at.toISOString(),
-  }));
+  };
+}
+
+async function queryMyLeaveRequests(
+  userId: string,
+  options?: RequestQueryOptions,
+): Promise<MyLeaveRequestRow[]> {
+  const db = getDb();
+  const { status, limit, offset } = listBounds(options);
+  const filter = myRequestFilter(db, userId, status);
+
+  return db<MyLeaveRequestRow[]>`
+    select
+      count(*) over ()::int as total,
+      r.id,
+      r.start_date::text as start_date,
+      r.end_date::text as end_date,
+      (r.end_date - r.start_date + 1)::int as days,
+      r.status::text as status,
+      r.created_at,
+      lt.id as leave_type_id,
+      lt.name as leave_type_name,
+      lt.tracks_balance
+    from leave_requests r
+    join leave_types lt on lt.id = r.leave_type_id
+    where ${filter}
+    order by r.created_at desc, r.id desc
+    limit ${limit}
+    offset ${offset}
+  `;
+}
+
+async function countMyLeaveRequests(userId: string, status: RequestStatus | null): Promise<number> {
+  const db = getDb();
+  const [row] = await db<{ total: number }[]>`
+    select count(*)::int as total
+    from leave_requests r
+    where ${myRequestFilter(db, userId, status)}
+  `;
+  return row?.total ?? 0;
+}
+
+export async function listMyLeaveRequests(userId: string): Promise<MyLeaveRequest[]> {
+  const rows = await queryMyLeaveRequests(userId);
+  return rows.map(toMyLeaveRequest);
+}
+
+export async function listMyLeaveRequestsPage(
+  userId: string,
+  options: LeaveRequestListOptions,
+): Promise<Paginated<MyLeaveRequest>> {
+  const rows = await queryMyLeaveRequests(userId, options);
+  const total = rows[0]?.total ?? (await countMyLeaveRequests(userId, options.status ?? null));
+
+  return {
+    items: rows.map(toMyLeaveRequest),
+    pagination: rowPagination(total, options),
+  };
 }
 
 export async function getMyLeaveData(userId: string): Promise<MyLeaveData> {
@@ -296,43 +391,29 @@ export interface ScopedActor {
   role: Role;
 }
 
+function scopedRequestFilter(db: Db, actor: ScopedActor, status: RequestStatus | null) {
+  return db`
+    r.is_deleted = false
+    and (
+      (${actor.role} = 'employee' and r.user_id = ${actor.id})
+      or (
+        ${actor.role} = 'manager'
+        and (r.user_id = ${actor.id} or e.manager_id = ${actor.id})
+      )
+      or (${actor.role} = 'hr_admin')
+    )
+    and (${status}::request_status is null or r.status = ${status}::request_status)
+  `;
+}
+
 /**
  * The scoped `/requests` list. Role picks the branch, but every scope predicate
  * stays in SQL: employees read their own rows, managers read their own plus
  * direct reports (`e.manager_id = :current_user_id`), and HR reads all. Unknown
  * roles match no branch, so the default is deny.
  */
-export async function listScopedLeaveRequests(actor: ScopedActor): Promise<RequestSummary[]> {
-  const rows = await getDb()<ScopedRequestRow[]>`
-    select
-      r.id,
-      r.start_date::text as start_date,
-      r.end_date::text as end_date,
-      (r.end_date - r.start_date + 1)::int as days,
-      r.status::text as status,
-      r.created_at,
-      lt.id as leave_type_id,
-      lt.name as leave_type_name,
-      lt.tracks_balance,
-      e.id as employee_id,
-      e.name as employee_name,
-      e.email as employee_email
-    from leave_requests r
-    join users e on e.id = r.user_id
-    join leave_types lt on lt.id = r.leave_type_id
-    where r.is_deleted = false
-      and (
-        (${actor.role} = 'employee' and r.user_id = ${actor.id})
-        or (
-          ${actor.role} = 'manager'
-          and (r.user_id = ${actor.id} or e.manager_id = ${actor.id})
-        )
-        or (${actor.role} = 'hr_admin')
-      )
-    order by r.created_at desc
-  `;
-
-  return rows.map((row) => ({
+function toRequestSummary(row: ScopedRequestRow): RequestSummary {
+  return {
     id: row.id,
     reference: formatRequestReference(row.id),
     employee: {
@@ -350,7 +431,72 @@ export async function listScopedLeaveRequests(actor: ScopedActor): Promise<Reque
     days: Number(row.days),
     status: toRequestStatus(row.status),
     createdAt: row.created_at.toISOString(),
-  }));
+  };
+}
+
+async function queryScopedLeaveRequests(
+  actor: ScopedActor,
+  options?: RequestQueryOptions,
+): Promise<ScopedRequestRow[]> {
+  const db = getDb();
+  const { status, limit, offset } = listBounds(options);
+  const filter = scopedRequestFilter(db, actor, status);
+
+  return db<ScopedRequestRow[]>`
+    select
+      count(*) over ()::int as total,
+      r.id,
+      r.start_date::text as start_date,
+      r.end_date::text as end_date,
+      (r.end_date - r.start_date + 1)::int as days,
+      r.status::text as status,
+      r.created_at,
+      lt.id as leave_type_id,
+      lt.name as leave_type_name,
+      lt.tracks_balance,
+      e.id as employee_id,
+      e.name as employee_name,
+      e.email as employee_email
+    from leave_requests r
+    join users e on e.id = r.user_id
+    join leave_types lt on lt.id = r.leave_type_id
+    where ${filter}
+    order by r.created_at desc, r.id desc
+    limit ${limit}
+    offset ${offset}
+  `;
+}
+
+async function countScopedLeaveRequests(
+  actor: ScopedActor,
+  status: RequestStatus | null,
+): Promise<number> {
+  const db = getDb();
+  const [row] = await db<{ total: number }[]>`
+    select count(*)::int as total
+    from leave_requests r
+    join users e on e.id = r.user_id
+    where ${scopedRequestFilter(db, actor, status)}
+  `;
+  return row?.total ?? 0;
+}
+
+export async function listScopedLeaveRequests(actor: ScopedActor): Promise<RequestSummary[]> {
+  const rows = await queryScopedLeaveRequests(actor);
+  return rows.map(toRequestSummary);
+}
+
+export async function listScopedLeaveRequestsPage(
+  actor: ScopedActor,
+  options: LeaveRequestListOptions,
+): Promise<Paginated<RequestSummary>> {
+  const rows = await queryScopedLeaveRequests(actor, options);
+  const total = rows[0]?.total ?? (await countScopedLeaveRequests(actor, options.status ?? null));
+
+  return {
+    items: rows.map(toRequestSummary),
+    pagination: rowPagination(total, options),
+  };
 }
 
 /** One active (not soft-deleted) request with its owner, manager, and decision. */
@@ -450,9 +596,17 @@ function toTeamLeaveRequest(row: TeamLeaveRequestRow): TeamLeaveRequest {
  * The direct-report predicate is intentionally in SQL. Never fetch the team
  * and filter by manager in application code.
  */
-export async function listTeamLeaveRequests(managerId: string): Promise<TeamLeaveRequest[]> {
-  const rows = await getDb()<TeamLeaveRequestRow[]>`
+async function queryTeamLeaveRequests(
+  managerId: string,
+  options?: RequestQueryOptions,
+): Promise<TeamLeaveRequestRow[]> {
+  const db = getDb();
+  const { status, limit, offset } = listBounds(options);
+  const filter = teamRequestFilter(db, managerId, status);
+
+  return db<TeamLeaveRequestRow[]>`
     select
+      count(*) over ()::int as total,
       r.id,
       r.start_date::text as start_date,
       r.end_date::text as end_date,
@@ -469,12 +623,43 @@ export async function listTeamLeaveRequests(managerId: string): Promise<TeamLeav
     from leave_requests r
     join users e on e.id = r.user_id
     join leave_types lt on lt.id = r.leave_type_id
-    where e.manager_id = ${managerId}
-      and r.is_deleted = false
-    order by r.created_at desc
+    where ${filter}
+    order by r.created_at desc, r.id desc
+    limit ${limit}
+    offset ${offset}
   `;
+}
 
+async function countTeamLeaveRequests(
+  managerId: string,
+  status: RequestStatus | null,
+): Promise<number> {
+  const db = getDb();
+  const [row] = await db<{ total: number }[]>`
+    select count(*)::int as total
+    from leave_requests r
+    join users e on e.id = r.user_id
+    where ${teamRequestFilter(db, managerId, status)}
+  `;
+  return row?.total ?? 0;
+}
+
+export async function listTeamLeaveRequests(managerId: string): Promise<TeamLeaveRequest[]> {
+  const rows = await queryTeamLeaveRequests(managerId);
   return rows.map(toTeamLeaveRequest);
+}
+
+export async function listTeamLeaveRequestsPage(
+  managerId: string,
+  options: LeaveRequestListOptions,
+): Promise<Paginated<TeamLeaveRequest>> {
+  const rows = await queryTeamLeaveRequests(managerId, options);
+  const total = rows[0]?.total ?? (await countTeamLeaveRequests(managerId, options.status ?? null));
+
+  return {
+    items: rows.map(toTeamLeaveRequest),
+    pagination: rowPagination(total, options),
+  };
 }
 
 /**
@@ -482,9 +667,16 @@ export async function listTeamLeaveRequests(managerId: string): Promise<TeamLeav
  * path keeps its `e.manager_id = :current_user_id` predicate, and HR never
  * passes through `scope=team`.
  */
-export async function listOrgLeaveRequests(): Promise<TeamLeaveRequest[]> {
-  const rows = await getDb()<TeamLeaveRequestRow[]>`
+async function queryOrgLeaveRequests(
+  options?: RequestQueryOptions,
+): Promise<TeamLeaveRequestRow[]> {
+  const db = getDb();
+  const { status, limit, offset } = listBounds(options);
+  const filter = orgRequestFilter(db, status);
+
+  return db<TeamLeaveRequestRow[]>`
     select
+      count(*) over ()::int as total,
       r.id,
       r.start_date::text as start_date,
       r.end_date::text as end_date,
@@ -501,11 +693,38 @@ export async function listOrgLeaveRequests(): Promise<TeamLeaveRequest[]> {
     from leave_requests r
     join users e on e.id = r.user_id
     join leave_types lt on lt.id = r.leave_type_id
-    where r.is_deleted = false
-    order by r.created_at desc
+    where ${filter}
+    order by r.created_at desc, r.id desc
+    limit ${limit}
+    offset ${offset}
   `;
+}
 
+async function countOrgLeaveRequests(status: RequestStatus | null): Promise<number> {
+  const db = getDb();
+  const [row] = await db<{ total: number }[]>`
+    select count(*)::int as total
+    from leave_requests r
+    where ${orgRequestFilter(db, status)}
+  `;
+  return row?.total ?? 0;
+}
+
+export async function listOrgLeaveRequests(): Promise<TeamLeaveRequest[]> {
+  const rows = await queryOrgLeaveRequests();
   return rows.map(toTeamLeaveRequest);
+}
+
+export async function listOrgLeaveRequestsPage(
+  options: LeaveRequestListOptions,
+): Promise<Paginated<TeamLeaveRequest>> {
+  const rows = await queryOrgLeaveRequests(options);
+  const total = rows[0]?.total ?? (await countOrgLeaveRequests(options.status ?? null));
+
+  return {
+    items: rows.map(toTeamLeaveRequest),
+    pagination: rowPagination(total, options),
+  };
 }
 
 export async function getTeamLeaveData(managerId: string): Promise<TeamLeaveData> {
