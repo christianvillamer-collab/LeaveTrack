@@ -4,6 +4,7 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { Role } from "@/lib/auth/roles";
 import { getDb } from "@/lib/db/client";
 import type {
+  AuditDateRange,
   AuditEvent,
   AuditReport,
   AuditReportEmployee,
@@ -138,10 +139,18 @@ function toAuditEvent(row: AuditEventRow): AuditEvent {
 /**
  * Full audit report for one employee: request rows (AC1 fields) plus the
  * append-only audit timeline. Soft-deleted requests are excluded in SQL, but
- * the underlying rows are never purged (AC2).
+ * the underlying rows are never purged (AC2). An optional date range filters
+ * requests by `created_at` and events by `occurred_at` using inclusive UTC
+ * calendar-day bounds; no upper retention cap is applied so old history stays
+ * reportable.
  */
-export async function getAuditReport(userId: string): Promise<AuditReport | null> {
+export async function getAuditReport(
+  userId: string,
+  dateRange: AuditDateRange = {},
+): Promise<AuditReport | null> {
   const db = getDb();
+  const from = dateRange.from ?? null;
+  const to = dateRange.to ?? null;
 
   const [employees, requestRows, events] = await Promise.all([
     db<EmployeeRow[]>`
@@ -170,9 +179,11 @@ export async function getAuditReport(userId: string): Promise<AuditReport | null
       left join users d on d.id = r.decided_by
       where r.user_id = ${userId}
         and r.is_deleted = false
+        and (${from}::date is null or r.created_at >= (${from}::date at time zone 'UTC'))
+        and (${to}::date is null or r.created_at < ((${to}::date + 1) at time zone 'UTC'))
       order by r.created_at desc
     `,
-    listAuditEventsForEmployee(userId),
+    listAuditEventsForEmployee(userId, undefined, dateRange),
   ]);
 
   const employee = employees[0];
@@ -191,11 +202,16 @@ export async function getAuditReport(userId: string): Promise<AuditReport | null
 /**
  * One employee's audit timeline, newest first. `limit` is optional; the
  * dashboard asks for a preview while the audit report reads the full history.
+ * The date range uses the same inclusive UTC bounds as the request query, and
+ * `id desc` breaks same-timestamp ties so pagination stays stable.
  */
 export async function listAuditEventsForEmployee(
   userId: string,
   limit?: number,
+  dateRange: AuditDateRange = {},
 ): Promise<AuditEvent[]> {
+  const from = dateRange.from ?? null;
+  const to = dateRange.to ?? null;
   const rows = await getDb()<AuditEventRow[]>`
     select
       a.id,
@@ -215,7 +231,9 @@ export async function listAuditEventsForEmployee(
     join users ac on ac.id = a.actor_id
     where r.user_id = ${userId}
       and r.is_deleted = false
-    order by a.occurred_at desc
+      and (${from}::date is null or a.occurred_at >= (${from}::date at time zone 'UTC'))
+      and (${to}::date is null or a.occurred_at < ((${to}::date + 1) at time zone 'UTC'))
+    order by a.occurred_at desc, a.id desc
     limit ${limit ?? null}
   `;
 

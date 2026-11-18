@@ -67,6 +67,26 @@ describe.skipIf(!hasDatabase)("employee audit report", () => {
     return result.request.id;
   }
 
+  /** UTC calendar day for relative offsets, matching the SQL day bounds. */
+  function utcDay(offsetDays = 0): string {
+    const date = new Date();
+    date.setUTCDate(date.getUTCDate() + offsetDays);
+    return date.toISOString().slice(0, 10);
+  }
+
+  /** Append an audit row with an explicit timestamp (the log forbids updates). */
+  async function insertDatedEvent(
+    requestId: string,
+    actorId: string,
+    occurredAt: string,
+    detail: string,
+  ) {
+    await getDb()`
+      insert into audit_log (leave_request_id, actor_id, action, detail, occurred_at)
+      values (${requestId}, ${actorId}, 'submitted', ${detail}, ${occurredAt}::timestamptz)
+    `;
+  }
+
   it("returns every request with status, decision-maker, and timestamp", async () => {
     const requestId = await createPending("2032-03-01", "2032-03-02", "Audit report — decision.");
 
@@ -111,7 +131,7 @@ describe.skipIf(!hasDatabase)("employee audit report", () => {
       where id = ${requestId}
     `;
 
-    const report = await getAuditReport(maya.id);
+    const report = await getAuditReport(maya.id, { from: utcDay(-1), to: utcDay(1) });
 
     expect(report?.requests.some((request) => request.id === requestId)).toBe(false);
     expect(report?.events.some((event) => event.requestId === requestId)).toBe(false);
@@ -143,5 +163,79 @@ describe.skipIf(!hasDatabase)("employee audit report", () => {
     expect(report?.employee.id).toBe(luis.id);
     expect(report?.requests.some((request) => request.id === requestId)).toBe(false);
     expect(report?.events.some((event) => event.requestId === requestId)).toBe(false);
+  });
+
+  it("filters requests and events by inclusive UTC calendar bounds", async () => {
+    const requestId = await createPending(
+      "2036-06-01",
+      "2036-06-02",
+      "Audit report — inclusive bounds.",
+    );
+
+    const onDay = await getAuditReport(maya.id, { from: utcDay(0), to: utcDay(0) });
+    expect(onDay?.requests.some((request) => request.id === requestId)).toBe(true);
+    expect(
+      (onDay?.events.filter((event) => event.requestId === requestId) ?? []).length,
+    ).toBeGreaterThan(0);
+
+    const after = await getAuditReport(maya.id, { from: utcDay(1) });
+    expect(after?.requests.some((request) => request.id === requestId)).toBe(false);
+    expect(after?.events.some((event) => event.requestId === requestId)).toBe(false);
+
+    const before = await getAuditReport(maya.id, { to: utcDay(-1) });
+    expect(before?.requests.some((request) => request.id === requestId)).toBe(false);
+    expect(before?.events.some((event) => event.requestId === requestId)).toBe(false);
+  });
+
+  it("reports audit history older than three years without an upper cap", async () => {
+    const requestId = await createPending(
+      "2037-01-04",
+      "2037-01-05",
+      "Audit report — old history.",
+    );
+    const old = "2022-06-15T10:30:00.000Z";
+
+    await getDb()`
+      update leave_requests
+      set created_at = ${old}::timestamptz
+      where id = ${requestId}
+    `;
+    await insertDatedEvent(requestId, maya.id, old, "Dated old history event");
+
+    const report = await getAuditReport(maya.id, { from: "2022-06-15", to: "2022-06-15" });
+
+    expect(report?.requests.some((request) => request.id === requestId)).toBe(true);
+    expect(
+      report?.events.some(
+        (event) => event.requestId === requestId && event.detail === "Dated old history event",
+      ),
+    ).toBe(true);
+  });
+
+  it("orders same-timestamp events newest-id first so pagination is stable", async () => {
+    const requestId = await createPending(
+      "2038-02-01",
+      "2038-02-01",
+      "Audit report — stable ordering.",
+    );
+    const stamp = "2026-02-02T09:00:00.000Z";
+    await insertDatedEvent(requestId, maya.id, stamp, "stable-a");
+    await insertDatedEvent(requestId, maya.id, stamp, "stable-b");
+
+    const report = await getAuditReport(maya.id, { from: "2026-02-02", to: "2026-02-02" });
+    const ids = (report?.events ?? [])
+      .filter((event) => event.detail === "stable-a" || event.detail === "stable-b")
+      .map((event) => event.id);
+
+    expect(ids).toHaveLength(2);
+    expect(ids).toEqual([...ids].sort().reverse());
+  });
+
+  it("returns empty requests and events for a range with no history", async () => {
+    const report = await getAuditReport(maya.id, { from: "2099-01-01", to: "2099-01-31" });
+
+    expect(report?.employee.id).toBe(maya.id);
+    expect(report?.requests).toEqual([]);
+    expect(report?.events).toEqual([]);
   });
 });

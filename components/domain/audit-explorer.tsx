@@ -1,10 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Search, ShieldCheck } from "lucide-react";
+import { Download, Search, ShieldCheck } from "lucide-react";
 
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -17,19 +18,30 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { AuditEvent } from "@/lib/types";
+import { AUDIT_CSV_HEADERS, actionLabel, auditEventToCsvRow } from "@/lib/utils/audit";
+import { toCsv } from "@/lib/utils/csv";
 import { formatDateTime } from "@/lib/utils/format";
 
 type ActionFilter = "all" | AuditEvent["action"];
 
-function actionLabel(action: AuditEvent["action"]): string {
-  if (action === "hr_override_approved") return "HR override approved";
-  if (action === "hr_override_rejected") return "HR override rejected";
-  return action;
+const PAGE_SIZE = 25;
+
+interface AuditExplorerProps {
+  events: AuditEvent[];
+  /** Report bounds from the page, used only to name the CSV download. */
+  from?: string;
+  to?: string;
 }
 
-export function AuditExplorer({ events }: { events: AuditEvent[] }) {
+function csvFileName(from?: string, to?: string): string {
+  const range = from || to ? `_${from ?? "start"}_${to ?? "end"}` : "";
+  return `audit-report${range}.csv`;
+}
+
+export function AuditExplorer({ events, from, to }: AuditExplorerProps) {
   const [query, setQuery] = useState("");
   const [action, setAction] = useState<ActionFilter>("all");
+  const [page, setPage] = useState(1);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -51,6 +63,27 @@ export function AuditExplorer({ events }: { events: AuditEvent[] }) {
     });
   }, [action, events, query]);
 
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const pageRows = filtered.slice(start, start + PAGE_SIZE);
+  const firstRow = filtered.length === 0 ? 0 : start + 1;
+  const lastRow = Math.min(start + PAGE_SIZE, filtered.length);
+
+  function downloadCsv() {
+    const csv = toCsv(AUDIT_CSV_HEADERS, filtered.map(auditEventToCsvRow));
+    // A BOM keeps non-ASCII names readable in Excel.
+    const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = csvFileName(from, to);
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -62,20 +95,26 @@ export function AuditExplorer({ events }: { events: AuditEvent[] }) {
           <Input
             type="search"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPage(1);
+            }}
             placeholder="Search employee, request, or actor"
             aria-label="Search audit events"
             className="pl-9"
           />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <label htmlFor="audit-action" className="text-caption text-muted-foreground">
             Action
           </label>
           <Select
             id="audit-action"
             value={action}
-            onChange={(event) => setAction(event.target.value as ActionFilter)}
+            onChange={(event) => {
+              setAction(event.target.value as ActionFilter);
+              setPage(1);
+            }}
             className="h-9 w-40"
           >
             <option value="all">All actions</option>
@@ -85,6 +124,16 @@ export function AuditExplorer({ events }: { events: AuditEvent[] }) {
             <option value="hr_override_approved">HR override approved</option>
             <option value="hr_override_rejected">HR override rejected</option>
           </Select>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={downloadCsv}
+            disabled={filtered.length === 0}
+          >
+            <Download aria-hidden="true" />
+            Export CSV
+          </Button>
         </div>
       </div>
 
@@ -96,7 +145,7 @@ export function AuditExplorer({ events }: { events: AuditEvent[] }) {
         <EmptyState
           icon={ShieldCheck}
           title="No matching audit events"
-          description="Adjust the search or action filter. Retention records are never purged."
+          description="Adjust the search or action filter, or widen the report date range. Retention records are never purged."
         />
       ) : (
         <>
@@ -113,7 +162,7 @@ export function AuditExplorer({ events }: { events: AuditEvent[] }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((event) => (
+                {pageRows.map((event) => (
                   <TableRow key={event.id}>
                     <TableCell className="text-muted-foreground whitespace-nowrap">
                       {formatDateTime(event.occurredAt)}
@@ -152,7 +201,7 @@ export function AuditExplorer({ events }: { events: AuditEvent[] }) {
           </div>
 
           <ul className="space-y-3 xl:hidden">
-            {filtered.map((event) => (
+            {pageRows.map((event) => (
               <li
                 key={event.id}
                 className="border-border bg-surface rounded-lg border p-4 shadow-xs"
@@ -186,6 +235,32 @@ export function AuditExplorer({ events }: { events: AuditEvent[] }) {
               </li>
             ))}
           </ul>
+
+          <div className="border-border flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-caption text-muted-foreground" role="status" aria-live="polite">
+              Showing {firstRow}–{lastRow} of {filtered.length} · Page {currentPage} of {pageCount}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setPage((value) => Math.max(1, value - 1))}
+                disabled={currentPage <= 1}
+              >
+                Previous
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
+                disabled={currentPage >= pageCount}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
         </>
       )}
     </div>

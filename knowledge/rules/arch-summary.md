@@ -103,7 +103,7 @@ Epic 1 delivered the core submit → balance → scoped queue → decision → a
 
 1. **Identity and authorization** — real provider (`ADR-E003`), DB-backed identity, centralized RBAC + relationship scoping (`ADR-E004`), DB-level enforcement decision.
 2. **Complete the DB-backed surface** — `/requests` and `/requests/[id]` (done), dashboard (done), HR override view (done), effective-dated policy admin (done), people admin.
-3. **Close PRD acceptance gaps** — submission/decision notifications, HR over-balance override, audit date-range and export.
+3. **Close PRD acceptance gaps** — submission/decision notifications, HR over-balance override, audit date-range and export (E2-12).
 4. **Scale and hardening** — pagination and indexes, 800-user load test, route-level authorization tests, fixture reset, accrual-ledger append-only guard, DB-down states, nonce-based CSP.
 
 ## Auth (Accepted — E2-02)
@@ -130,6 +130,7 @@ The app uses **RBAC + relationship-based scoping**, not RBAC alone. See `ADR-Lea
 - The DB `users.role` is the source of truth; neither a provider claim nor a cookie role is trusted for authorization.
 - All page and route authorization checks call the pure `lib/auth/policy.ts` matrix (an `Actor` of DB `id` + `role` plus the record's scope). `lib/auth/access.ts` was deleted in E2-03; `/requests`, `/requests/[id]`, and the dashboard now use DB actors, and the dashboard's employee and manager branches read only their own rows.
 - HR override is a separate audited action, not a blanket "HR can do anything." `POST /api/leave-requests/:id/override` requires `override: true` plus a reason, refuses the actor's own request (403), and shares the decision transaction's pending/duplicate guards. Since E2-11, HR approval may cross a short balance and stores the true (possibly negative) result with a distinct `hr_override_*` audit action; managers still receive 409.
+- The HR audit report (`GET /api/audit/:userId` and `/audit`) accepts optional inclusive UTC `from`/`to` bounds from one shared Zod schema. Pagination is a display slice over the filtered events and the CSV is generated client-side from the full filtered set, so the export always matches the on-screen report (`ADR-LeaveTrack-E2-12`).
 
 | Action                  | Employee  | Manager                   | HR Admin                       |
 | ----------------------- | --------- | ------------------------- | ------------------------------ |
@@ -147,6 +148,7 @@ The app uses **RBAC + relationship-based scoping**, not RBAC alone. See `ADR-Lea
 
 - `ADR-LeaveTrack-E002` — accrual idempotency (referenced by this document; added in Epic 2).
 - `ADR-LeaveTrack-E006` — policy effective dating (dated rate rows resolved per run period; implemented by E2-08).
+- `ADR-LeaveTrack-E2-12` — audit date range, stable pagination, and a CSV export that matches the report (implemented by E2-12).
 - `ADR-LeaveTrack-E003` — auth provider (accepted: Supabase Auth; implemented by E2-02).
 - `ADR-LeaveTrack-E004` — authorization model (RBAC + relationship scoping).
 - `ADR-LeaveTrack-E005` — database authorization (RLS deny-by-default + server-only least-privilege role; implemented by E2-04).
