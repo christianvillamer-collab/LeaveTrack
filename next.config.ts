@@ -38,6 +38,9 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  experimental: {
+    agentUpgrade: "security",
+  },
   serverExternalPackages: ["pino", "postgres"],
   async headers() {
     return [

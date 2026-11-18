@@ -34,13 +34,25 @@ export const GET = withApiHandler<AuditReport, { userId: string }>(
       throw AppError.notFound("Employee not found.");
     }
 
+    const param = (name: string) => request.nextUrl.searchParams.get(name) ?? undefined;
     const query = auditReportQuerySchema.parse({
-      employee: request.nextUrl.searchParams.get("employee") ?? undefined,
-      from: request.nextUrl.searchParams.get("from") ?? undefined,
-      to: request.nextUrl.searchParams.get("to") ?? undefined,
+      employee: param("employee"),
+      from: param("from"),
+      to: param("to"),
+      status: param("status"),
+      page: param("page"),
+      pageSize: param("pageSize"),
+      exportAll: param("exportAll"),
     });
 
-    const report = await getAuditReport(parsedId.data, { from: query.from, to: query.to });
+    const report = await getAuditReport(parsedId.data, {
+      from: query.from,
+      to: query.to,
+      status: query.status,
+      page: query.page,
+      pageSize: query.pageSize,
+      exportAll: query.exportAll,
+    });
 
     if (!report) {
       throw AppError.notFound("Employee not found.");

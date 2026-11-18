@@ -238,4 +238,80 @@ describe.skipIf(!hasDatabase)("employee audit report", () => {
     expect(report?.requests).toEqual([]);
     expect(report?.events).toEqual([]);
   });
+
+  it("filters paged reports by request status", async () => {
+    const requestId = await createPending("2039-03-01", "2039-03-02", "Audit report — status.");
+    await decideLeaveRequest({
+      requestId,
+      managerId: daniel.id,
+      managerName: daniel.name,
+      decision: "rejected",
+      reason: "Audit report status filter — capacity.",
+    });
+
+    const rejected = await getAuditReport(maya.id, {
+      status: "rejected",
+      page: 1,
+      pageSize: 100,
+    });
+    const pending = await getAuditReport(maya.id, {
+      status: "pending",
+      page: 1,
+      pageSize: 100,
+    });
+
+    expect(rejected?.requests.every((request) => request.status === "rejected")).toBe(true);
+    expect(rejected?.requests.some((request) => request.id === requestId)).toBe(true);
+    expect(
+      rejected?.events.some(
+        (event) => event.requestId === requestId && event.action === "rejected",
+      ),
+    ).toBe(true);
+    expect(pending?.requests.some((request) => request.id === requestId)).toBe(false);
+  });
+
+  it("paginates events but can export the full filtered set", async () => {
+    const requestId = await createPending("2040-04-01", "2040-04-02", "Audit report — export all.");
+    const paged = await getAuditReport(maya.id, { page: 1, pageSize: 1 });
+    const exported = await getAuditReport(maya.id, {
+      page: 1,
+      pageSize: 1,
+      exportAll: true,
+    });
+
+    expect(paged?.events).toHaveLength(1);
+    expect(exported?.events.length).toBe(exported?.pagination.total);
+    expect(exported?.pagination.pageCount).toBe(1);
+    expect(exported?.events.some((event) => event.requestId === requestId)).toBe(true);
+    expect(exported?.events.length).toBeGreaterThanOrEqual(paged?.events.length ?? 0);
+  });
+
+  it("keeps the event total when the requested page is past the end", async () => {
+    const all = await getAuditReport(maya.id, { page: 1, pageSize: 100 });
+    const pastEnd = await getAuditReport(maya.id, { page: 99, pageSize: 25 });
+
+    expect(pastEnd?.events).toEqual([]);
+    expect(pastEnd?.pagination.total).toBe(all?.pagination.total ?? 0);
+    expect(pastEnd?.pagination.pageCount).toBe(
+      Math.max(1, Math.ceil((all?.pagination.total ?? 0) / 25)),
+    );
+  });
+
+  it("excludes soft-deleted requests from paged reports", async () => {
+    const requestId = await createPending(
+      "2041-05-01",
+      "2041-05-02",
+      "Audit report — paged soft delete.",
+    );
+    await getDb()`
+      update leave_requests
+      set is_deleted = true
+      where id = ${requestId}
+    `;
+
+    const report = await getAuditReport(maya.id, { page: 1, pageSize: 100 });
+
+    expect(report?.requests.some((request) => request.id === requestId)).toBe(false);
+    expect(report?.events.some((event) => event.requestId === requestId)).toBe(false);
+  });
 });

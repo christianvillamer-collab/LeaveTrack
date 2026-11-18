@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { listQuerySchema } from "@/lib/validation/list";
+
 export const leaveRequestInputSchema = z
   .object({
     leaveTypeId: z.uuid("Select a valid leave type."),
@@ -29,6 +31,13 @@ export const leaveRequestScopeSchema = z
   .default("mine");
 
 export type LeaveRequestScope = z.infer<typeof leaveRequestScopeSchema>;
+
+/** Query contract shared by `GET /api/leave-requests` and `/requests`. */
+export const leaveRequestListQuerySchema = listQuerySchema.extend({
+  scope: leaveRequestScopeSchema,
+});
+
+export type LeaveRequestListQuery = z.infer<typeof leaveRequestListQuerySchema>;
 
 export const decisionInputSchema = z
   .object({

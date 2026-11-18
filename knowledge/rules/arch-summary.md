@@ -49,21 +49,22 @@ policy_audit_log (id, user_id FK, leave_type_id FK, effective_from date, previou
 
 - `leave_requests.is_deleted` — **soft delete only**, per BR-04 (3-year retention). No hard-delete path exists anywhere in the codebase.
 - `users.manager_id` is the sole source of truth for the scoped-visibility rule (US-04). A manager's queue query always filters `WHERE manager_id = :current_user_id`.
+- List reads are bounded in Postgres: page size defaults to 25 and is capped at 100. The E2-13 indexes `users(manager_id)`, `leave_requests(user_id,status,created_at desc)`, `leave_requests(status,created_at desc)`, and `audit_log(leave_request_id,occurred_at desc)` cover the scoped, filtered, and audit pages; status parameters are cast to `request_status` so those indexes remain usable.
 
 ## Api Design (Selected)
 
 ## API Design (selected)
 
-| Method | Route                            | Auth          | Notes                                                          |
-| ------ | -------------------------------- | ------------- | -------------------------------------------------------------- |
-| POST   | /api/leave-requests              | Employee      | US-01. Validates date range server-side (AC2).                 |
-| GET    | /api/leave-requests?scope=mine   | Employee      | US-02 balance context.                                         |
-| GET    | /api/leave-requests?scope=team   | Manager       | US-04 — server-side filter on `manager_id`, never client-side. |
-| POST   | /api/leave-requests/:id/decision | Manager       | US-03. 403 if requester is not a direct report (AC3).          |
-| POST   | /api/leave-requests/:id/override | HR Admin      | E2-07. Explicit `override: true` + reason; audited.            |
-| POST   | /api/policies                    | HR Admin      | E2-08. Upsert an effective-dated rate; one audit row.          |
-| GET    | /api/audit/:userId               | HR Admin      | US-05. Reads soft-deleted-excluded, never hard-deleted, rows.  |
-| POST   | /api/jobs/accrual                | System (cron) | US-07. Idempotent — see ADR-LeaveTrack-E002.                   |
+| Method | Route                            | Auth          | Notes                                                                                                |
+| ------ | -------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------- |
+| POST   | /api/leave-requests              | Employee      | US-01. Validates date range server-side (AC2).                                                       |
+| GET    | /api/leave-requests?scope=mine   | Employee      | US-02 balance context; `status`/`page`/`pageSize`, `Paginated` body.                                 |
+| GET    | /api/leave-requests?scope=team   | Manager       | US-04 — SQL `manager_id` filter plus status/paging; never client-side.                               |
+| POST   | /api/leave-requests/:id/decision | Manager       | US-03. 403 if requester is not a direct report (AC3).                                                |
+| POST   | /api/leave-requests/:id/override | HR Admin      | E2-07. Explicit `override: true` + reason; audited.                                                  |
+| POST   | /api/policies                    | HR Admin      | E2-08. Upsert an effective-dated rate; one audit row.                                                |
+| GET    | /api/audit/:userId               | HR Admin      | US-05. Soft-deleted-excluded rows; `from`/`to`/`status`/`page`/`pageSize`, or `exportAll=1` for CSV. |
+| POST   | /api/jobs/accrual                | System (cron) | US-07. Idempotent — see ADR-LeaveTrack-E002.                                                         |
 
 Error format: `{ success: false, error: { code, message } }` on every non-2xx response, per AGENTS.md convention.
 
@@ -130,7 +131,8 @@ The app uses **RBAC + relationship-based scoping**, not RBAC alone. See `ADR-Lea
 - The DB `users.role` is the source of truth; neither a provider claim nor a cookie role is trusted for authorization.
 - All page and route authorization checks call the pure `lib/auth/policy.ts` matrix (an `Actor` of DB `id` + `role` plus the record's scope). `lib/auth/access.ts` was deleted in E2-03; `/requests`, `/requests/[id]`, and the dashboard now use DB actors, and the dashboard's employee and manager branches read only their own rows.
 - HR override is a separate audited action, not a blanket "HR can do anything." `POST /api/leave-requests/:id/override` requires `override: true` plus a reason, refuses the actor's own request (403), and shares the decision transaction's pending/duplicate guards. Since E2-11, HR approval may cross a short balance and stores the true (possibly negative) result with a distinct `hr_override_*` audit action; managers still receive 409.
-- The HR audit report (`GET /api/audit/:userId` and `/audit`) accepts optional inclusive UTC `from`/`to` bounds from one shared Zod schema. Pagination is a display slice over the filtered events and the CSV is generated client-side from the full filtered set, so the export always matches the on-screen report (`ADR-LeaveTrack-E2-12`).
+- The HR audit report (`GET /api/audit/:userId` and `/audit`) accepts optional inclusive UTC `from`/`to` bounds from one shared Zod schema. Pagination and status filtering run in Postgres; `exportAll=1` returns the full filtered set in the standard envelope so the client-built CSV still matches every matching row (`ADR-LeaveTrack-E2-12`, `ADR-LeaveTrack-E2-13`).
+- `/requests`, `/approvals`, and `/audit` share one fail-closed list query contract (`status`, `page`, `pageSize`). Invalid search params show an error and load no rows; manager scope stays a SQL predicate and is never narrowed or widened in the browser. The 800-user database baseline is in `docs/performance/e2-13-baseline.md`.
 
 | Action                  | Employee  | Manager                   | HR Admin                       |
 | ----------------------- | --------- | ------------------------- | ------------------------------ |
@@ -149,6 +151,7 @@ The app uses **RBAC + relationship-based scoping**, not RBAC alone. See `ADR-Lea
 - `ADR-LeaveTrack-E002` — accrual idempotency (referenced by this document; added in Epic 2).
 - `ADR-LeaveTrack-E006` — policy effective dating (dated rate rows resolved per run period; implemented by E2-08).
 - `ADR-LeaveTrack-E2-12` — audit date range, stable pagination, and a CSV export that matches the report (implemented by E2-12).
+- `ADR-LeaveTrack-E2-13` — server-side list pagination, status filters, and index verification (implemented by E2-13).
 - `ADR-LeaveTrack-E003` — auth provider (accepted: Supabase Auth; implemented by E2-02).
 - `ADR-LeaveTrack-E004` — authorization model (RBAC + relationship scoping).
 - `ADR-LeaveTrack-E005` — database authorization (RLS deny-by-default + server-only least-privilege role; implemented by E2-04).

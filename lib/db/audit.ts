@@ -3,16 +3,22 @@ import "server-only";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { Role } from "@/lib/auth/roles";
 import { getDb } from "@/lib/db/client";
+
+type Db = ReturnType<typeof getDb>;
 import type {
   AuditDateRange,
   AuditEvent,
+  AuditEventListOptions,
   AuditReport,
   AuditReportEmployee,
+  AuditReportOptions,
   AuditReportRequest,
   LeaveType,
+  Paginated,
   RequestStatus,
 } from "@/lib/types";
 import { formatRequestReference } from "@/lib/utils/format";
+import { DEFAULT_PAGE_SIZE, toPaginationMeta } from "@/lib/validation/list";
 
 interface EmployeeRow {
   id: string;
@@ -38,6 +44,7 @@ interface AuditRequestRow {
 }
 
 interface AuditEventRow {
+  total: number;
   id: string;
   request_id: string;
   action: string;
@@ -146,13 +153,17 @@ function toAuditEvent(row: AuditEventRow): AuditEvent {
  */
 export async function getAuditReport(
   userId: string,
-  dateRange: AuditDateRange = {},
+  options: AuditReportOptions = {},
 ): Promise<AuditReport | null> {
   const db = getDb();
-  const from = dateRange.from ?? null;
-  const to = dateRange.to ?? null;
+  const from = options.from ?? null;
+  const to = options.to ?? null;
+  const status = options.status ?? null;
+  const page = options.page ?? 1;
+  const pageSize = options.pageSize ?? DEFAULT_PAGE_SIZE;
+  const exportAll = options.exportAll ?? false;
 
-  const [employees, requestRows, events] = await Promise.all([
+  const [employees, requestRows, eventResult] = await Promise.all([
     db<EmployeeRow[]>`
       select id, name, email, role
       from users
@@ -181,9 +192,17 @@ export async function getAuditReport(
         and r.is_deleted = false
         and (${from}::date is null or r.created_at >= (${from}::date at time zone 'UTC'))
         and (${to}::date is null or r.created_at < ((${to}::date + 1) at time zone 'UTC'))
-      order by r.created_at desc
+        and (${status}::request_status is null or r.status = ${status}::request_status)
+      order by r.created_at desc, r.id desc
     `,
-    listAuditEventsForEmployee(userId, undefined, dateRange),
+    listAuditEventsForEmployee(userId, {
+      from: options.from,
+      to: options.to,
+      status: options.status,
+      page,
+      pageSize,
+      exportAll,
+    }),
   ]);
 
   const employee = employees[0];
@@ -195,25 +214,44 @@ export async function getAuditReport(
   return {
     employee: toEmployee(employee),
     requests: requestRows.map(toReportRequest),
-    events,
+    events: eventResult.items,
+    pagination: eventResult.pagination,
+    status: options.status,
+    exportAll,
   };
 }
 
-/**
- * One employee's audit timeline, newest first. `limit` is optional; the
- * dashboard asks for a preview while the audit report reads the full history.
- * The date range uses the same inclusive UTC bounds as the request query, and
- * `id desc` breaks same-timestamp ties so pagination stays stable.
- */
-export async function listAuditEventsForEmployee(
+interface AuditEventQueryOptions extends AuditDateRange {
+  limit?: number | null;
+  status?: RequestStatus;
+  offset?: number | null;
+}
+
+/** One predicate shared by the page query and the empty-page total fallback. */
+function auditEventFilter(db: Db, userId: string, options: AuditEventQueryOptions) {
+  const from = options.from ?? null;
+  const to = options.to ?? null;
+  const status = options.status ?? null;
+
+  return db`
+    r.user_id = ${userId}
+    and r.is_deleted = false
+    and (${from}::date is null or a.occurred_at >= (${from}::date at time zone 'UTC'))
+    and (${to}::date is null or a.occurred_at < ((${to}::date + 1) at time zone 'UTC'))
+    and (${status}::request_status is null or r.status = ${status}::request_status)
+  `;
+}
+
+async function queryAuditEventsForEmployee(
   userId: string,
-  limit?: number,
-  dateRange: AuditDateRange = {},
-): Promise<AuditEvent[]> {
-  const from = dateRange.from ?? null;
-  const to = dateRange.to ?? null;
-  const rows = await getDb()<AuditEventRow[]>`
+  options: AuditEventQueryOptions,
+): Promise<AuditEventRow[]> {
+  const db = getDb();
+  const filter = auditEventFilter(db, userId, options);
+
+  return db<AuditEventRow[]>`
     select
+      count(*) over ()::int as total,
       a.id,
       a.leave_request_id as request_id,
       a.action,
@@ -229,15 +267,77 @@ export async function listAuditEventsForEmployee(
     join leave_requests r on r.id = a.leave_request_id
     join users e on e.id = r.user_id
     join users ac on ac.id = a.actor_id
-    where r.user_id = ${userId}
-      and r.is_deleted = false
-      and (${from}::date is null or a.occurred_at >= (${from}::date at time zone 'UTC'))
-      and (${to}::date is null or a.occurred_at < ((${to}::date + 1) at time zone 'UTC'))
+    where ${filter}
     order by a.occurred_at desc, a.id desc
-    limit ${limit ?? null}
+    limit ${options.limit ?? null}
+    offset ${options.offset ?? null}
   `;
+}
 
-  return rows.map(toAuditEvent);
+async function countAuditEventsForEmployee(
+  userId: string,
+  options: AuditEventQueryOptions,
+): Promise<number> {
+  const db = getDb();
+  const [row] = await db<{ total: number }[]>`
+    select count(*)::int as total
+    from audit_log a
+    join leave_requests r on r.id = a.leave_request_id
+    where ${auditEventFilter(db, userId, options)}
+  `;
+  return row?.total ?? 0;
+}
+
+/**
+ * Dashboard preview overload: a plain array bounded by `limit`.
+ */
+export async function listAuditEventsForEmployee(
+  userId: string,
+  limit?: number,
+  dateRange?: AuditDateRange,
+): Promise<AuditEvent[]>;
+/**
+ * Report overload: a page of events plus the total from the same SQL statement.
+ * `exportAll` skips only the limit/offset so a CSV sees the whole filtered set.
+ */
+export async function listAuditEventsForEmployee(
+  userId: string,
+  options: AuditEventListOptions,
+): Promise<Paginated<AuditEvent>>;
+export async function listAuditEventsForEmployee(
+  userId: string,
+  limitOrOptions?: number | AuditEventListOptions,
+  dateRange: AuditDateRange = {},
+): Promise<AuditEvent[] | Paginated<AuditEvent>> {
+  if (typeof limitOrOptions === "number" || limitOrOptions === undefined) {
+    const rows = await queryAuditEventsForEmployee(userId, {
+      limit: limitOrOptions,
+      from: dateRange.from,
+      to: dateRange.to,
+    });
+    return rows.map(toAuditEvent);
+  }
+
+  const options = limitOrOptions;
+  const page = options.page ?? 1;
+  const pageSize = options.pageSize ?? DEFAULT_PAGE_SIZE;
+  const exportAll = options.exportAll ?? false;
+  const queryOptions: AuditEventQueryOptions = {
+    from: options.from,
+    to: options.to,
+    status: options.status,
+    limit: exportAll ? null : pageSize,
+    offset: exportAll ? null : (page - 1) * pageSize,
+  };
+  const rows = await queryAuditEventsForEmployee(userId, queryOptions);
+  const total = rows[0]?.total ?? (await countAuditEventsForEmployee(userId, queryOptions));
+
+  return {
+    items: rows.map(toAuditEvent),
+    pagination: exportAll
+      ? toPaginationMeta(total, 1, Math.max(1, total))
+      : toPaginationMeta(total, page, pageSize),
+  };
 }
 
 /**

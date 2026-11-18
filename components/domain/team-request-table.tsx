@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Inbox } from "lucide-react";
 
 import { LeaveTypeBadge } from "@/components/domain/leave-type-badge";
@@ -13,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { TeamLeaveRequest } from "@/lib/types";
+import type { PaginationMeta, TeamLeaveRequest } from "@/lib/types";
 import { formatDate, formatDateRange, formatDays } from "@/lib/utils/format";
 
 export interface TeamRequestTableProps {
@@ -30,6 +31,8 @@ export interface TeamRequestTableProps {
    */
   canActOn?: (request: TeamLeaveRequest) => boolean;
   variant?: "table" | "cards";
+  pagination?: PaginationMeta;
+  pageHref?: (page: number) => string;
 }
 
 export function TeamRequestTable({
@@ -40,9 +43,50 @@ export function TeamRequestTable({
   override = false,
   canActOn,
   variant = "table",
+  pagination,
+  pageHref,
 }: TeamRequestTableProps) {
+  const paginationNav =
+    pagination && pageHref ? (
+      <nav
+        aria-label="Queue pages"
+        className="border-border flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <p className="text-caption text-muted-foreground" role="status" aria-live="polite">
+          {pagination.total} requests · Page {pagination.page} of {pagination.pageCount}
+        </p>
+        <div className="flex items-center gap-2">
+          {pagination.page > 1 ? (
+            <Link
+              href={pageHref(pagination.page - 1)}
+              className="text-small text-primary hover:text-primary-hover focus-visible:ring-ring rounded-sm font-semibold focus-visible:ring-2 focus-visible:outline-none"
+            >
+              Previous
+            </Link>
+          ) : (
+            <span className="text-muted-foreground text-small">Previous</span>
+          )}
+          {pagination.page < pagination.pageCount ? (
+            <Link
+              href={pageHref(pagination.page + 1)}
+              className="text-small text-primary hover:text-primary-hover focus-visible:ring-ring rounded-sm font-semibold focus-visible:ring-2 focus-visible:outline-none"
+            >
+              Next
+            </Link>
+          ) : (
+            <span className="text-muted-foreground text-small">Next</span>
+          )}
+        </div>
+      </nav>
+    ) : null;
+
   if (requests.length === 0) {
-    return <EmptyState icon={Inbox} title={emptyTitle} description={emptyDescription} />;
+    return (
+      <>
+        <EmptyState icon={Inbox} title={emptyTitle} description={emptyDescription} />
+        {pagination && pagination.total > 0 ? paginationNav : null}
+      </>
+    );
   }
 
   const showsActions = (request: TeamLeaveRequest) =>
@@ -87,7 +131,12 @@ export function TeamRequestTable({
   );
 
   if (variant === "cards") {
-    return cards;
+    return (
+      <>
+        {cards}
+        {paginationNav}
+      </>
+    );
   }
 
   return (
@@ -154,6 +203,7 @@ export function TeamRequestTable({
       </div>
 
       {cards}
+      {paginationNav}
     </>
   );
 }

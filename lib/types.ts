@@ -1,6 +1,26 @@
 import type { Role } from "@/lib/auth/roles";
 
-export type RequestStatus = "pending" | "approved" | "rejected";
+export const REQUEST_STATUSES = ["pending", "approved", "rejected"] as const;
+
+export type RequestStatus = (typeof REQUEST_STATUSES)[number];
+
+export interface PaginationMeta {
+  page: number;
+  pageSize: number;
+  total: number;
+  pageCount: number;
+}
+
+export interface Paginated<T> {
+  items: T[];
+  pagination: PaginationMeta;
+}
+
+export interface LeaveRequestListOptions {
+  status?: RequestStatus;
+  page: number;
+  pageSize: number;
+}
 
 export interface Employee {
   id: string;
@@ -162,6 +182,9 @@ export interface AuditReport {
   employee: AuditReportEmployee;
   requests: AuditReportRequest[];
   events: AuditEvent[];
+  pagination: PaginationMeta;
+  status?: RequestStatus;
+  exportAll?: boolean;
 }
 
 /** Optional inclusive UTC calendar bounds applied to an audit report. */
@@ -170,6 +193,21 @@ export interface AuditDateRange {
   from?: string;
   /** Inclusive end date (`YYYY-MM-DD`). */
   to?: string;
+}
+
+export interface AuditReportOptions extends AuditDateRange {
+  status?: RequestStatus;
+  page?: number;
+  pageSize?: number;
+  exportAll?: boolean;
+}
+
+export interface AuditEventListOptions extends AuditDateRange {
+  limit?: number;
+  status?: RequestStatus;
+  page?: number;
+  pageSize?: number;
+  exportAll?: boolean;
 }
 
 export interface LeaveRequestWarning {
