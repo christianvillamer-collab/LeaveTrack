@@ -54,6 +54,7 @@ import {
   GET as getNotificationJob,
   POST as postNotificationJob,
 } from "@/app/api/jobs/notifications/route";
+import { accrualPeriod } from "@/lib/domain/accrual";
 
 type Handler = (request: NextRequest) => Promise<Response>;
 
@@ -109,7 +110,7 @@ describe("cron job authorization", () => {
         await errorBody(response, "UNAUTHENTICATED");
       });
 
-      it("does not grant access from a valid user session alone", async () => {
+      it("never consults a user session", async () => {
         const response = await handler(request());
 
         expect(response.status).toBe(401);
@@ -137,7 +138,7 @@ describe("cron job delegation", () => {
     await getAccrual(request(authorization));
 
     expect(state.accrualCalls).toHaveLength(1);
-    expect(state.accrualCalls[0]).toMatch(/^\d{4}-(0[1-9]|1[0-2])-01$/);
+    expect(state.accrualCalls[0]).toBe(accrualPeriod());
   });
 
   it("runs the notification outbox once per request", async () => {

@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
@@ -28,6 +31,10 @@ const state = vi.hoisted(() => ({
     EMAIL_API_KEY: "",
     EMAIL_FROM: "",
   },
+  auditReport: null as null | Record<string, unknown>,
+  policyError: null as Error | null,
+  decideError: null as Error | null,
+  overrideError: null as Error | null,
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: async () => state.session }));
@@ -44,28 +51,32 @@ vi.mock("@/lib/db/leave", () => ({
     items: [],
     pagination: { page: 1, pageSize: 25, total: 0, pageCount: 1 },
   }),
-  decideLeaveRequest: async () => ({ id: "decided", status: "approved" }),
-  overrideLeaveRequest: async () => ({ id: "overridden", status: "approved" }),
+  decideLeaveRequest: async () => {
+    if (state.decideError) throw state.decideError;
+    return { id: "decided", status: "approved" };
+  },
+  overrideLeaveRequest: async () => {
+    if (state.overrideError) throw state.overrideError;
+    return { id: "overridden", status: "approved" };
+  },
 }));
 
 vi.mock("@/lib/db/audit", () => ({
-  getAuditReport: async () => ({
-    employee: { id: "employee", name: "Employee", email: "employee@example.com", role: "employee" },
-    requests: [],
-    events: [],
-    pagination: { page: 1, pageSize: 25, total: 0, pageCount: 1 },
-  }),
+  getAuditReport: async () => state.auditReport,
 }));
 
 vi.mock("@/lib/db/policies", () => ({
-  upsertPolicyRate: async () => ({
-    userId: "employee",
-    leaveTypeId: "leave-type",
-    accrualPerMonth: 1.5,
-    effectiveFrom: "2027-01-01",
-    previousRate: 1.25,
-    auditWritten: true,
-  }),
+  upsertPolicyRate: async () => {
+    if (state.policyError) throw state.policyError;
+    return {
+      userId: "employee",
+      leaveTypeId: "leave-type",
+      accrualPerMonth: 1.5,
+      effectiveFrom: "2027-01-01",
+      previousRate: 1.25,
+      auditWritten: true,
+    };
+  },
 }));
 
 vi.mock("@/lib/db/people", () => ({
@@ -119,6 +130,7 @@ import { POST as postManager } from "@/app/api/people/[id]/manager/route";
 import { POST as postProfile } from "@/app/api/people/[id]/profile/route";
 import { POST as postStatus } from "@/app/api/people/[id]/status/route";
 import { POST as postPolicy } from "@/app/api/policies/route";
+import { AppError, ERROR_CODES } from "@/lib/api/errors";
 
 type Role = "employee" | "manager" | "hr_admin";
 
@@ -128,6 +140,7 @@ const HR = "b0000000-0000-4000-8000-000000000003";
 const LEAVE_TYPE = "11111111-1111-4111-8111-111111111111";
 const REQUEST = "c0000000-0000-4000-8000-000000000001";
 const NOTIFICATION = "d0000000-0000-4000-8000-000000000001";
+const UNKNOWN = "e0000000-0000-4000-8000-000000000001";
 
 function sessionFor(role: Role) {
   return {
@@ -153,6 +166,50 @@ function post(path: string, body: unknown, headers?: Record<string, string>): Ne
 
 function cronHeaders(authorized: boolean): Record<string, string> | undefined {
   return authorized ? { authorization: `Bearer ${state.env.CRON_SECRET}` } : undefined;
+}
+
+interface ApiRouteFile {
+  path: string;
+  file: string;
+}
+
+/** Walk the real app/api tree so a new route cannot silently escape the matrix. */
+function discoverApiRoutes(): ApiRouteFile[] {
+  const root = resolve(process.cwd(), "app/api");
+  const found: ApiRouteFile[] = [];
+
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const file = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(file);
+      } else if (entry.name === "route.ts") {
+        const path = `/api/${relative(root, file)
+          .split(sep)
+          .join("/")
+          .replace(/\/route\.ts$/, "")}`.replace(/\[([^\]]+)\]/g, ":$1");
+        found.push({ path, file });
+      }
+    }
+  };
+
+  walk(root);
+  return found;
+}
+
+function exportedVerbs(file: string): string[] {
+  const source = readFileSync(file, "utf8");
+  return Array.from(
+    source.matchAll(/export (?:const|async function) (GET|POST|PUT|PATCH|DELETE)\b/g),
+  ).flatMap((match) => (match[1] ? [match[1]] : []));
+}
+
+function matrixRoutePath(name: string): string {
+  return name
+    .replace(/^(GET|POST) /, "")
+    .replace(/\?.*$/, "")
+    .replace(/ \(.*$/, "")
+    .trim();
 }
 
 interface RouteCase {
@@ -359,11 +416,43 @@ async function expectSuccess(response: Response, status: number): Promise<void> 
 beforeEach(() => {
   state.session = sessionFor("employee");
   state.env.CRON_SECRET = "test-cron-secret";
+  state.auditReport = {
+    employee: { id: EMPLOYEE, name: "Employee", email: "employee@example.com", role: "employee" },
+    requests: [],
+    events: [],
+    pagination: { page: 1, pageSize: 25, total: 0, pageCount: 1 },
+  };
+  state.policyError = null;
+  state.decideError = null;
+  state.overrideError = null;
 });
 
 describe("E2-15 route authorization and envelope matrix", () => {
-  it("covers every API handler with at least one success and one failure case", () => {
-    expect(routes).toHaveLength(19);
+  it("has a success and failure case for every route file and exported verb", () => {
+    const discovered = discoverApiRoutes();
+    const coveredPaths = new Set(routes.map((route) => matrixRoutePath(route.name)));
+
+    expect(discovered.length).toBeGreaterThan(0);
+    expect(discovered.map((route) => route.path).filter((path) => !coveredPaths.has(path))).toEqual(
+      [],
+    );
+    expect(
+      routes
+        .map((route) => route.name)
+        .filter((name) => !discovered.some((route) => route.path === matrixRoutePath(name))),
+    ).toEqual([]);
+
+    for (const route of discovered) {
+      for (const verb of exportedVerbs(route.file)) {
+        expect(
+          routes.some(
+            (entry) =>
+              entry.name.startsWith(`${verb} `) && matrixRoutePath(entry.name) === route.path,
+          ),
+          `${verb} ${route.path} needs a matrix case`,
+        ).toBe(true);
+      }
+    }
   });
 
   for (const route of routes) {
@@ -415,4 +504,100 @@ describe("E2-15 route authorization and envelope matrix", () => {
       }
     });
   }
+});
+
+/** Deferrals from E2-07/E2-08 retros that this matrix now owns. */
+describe("deferred handler-level error cases", () => {
+  const policyBody = {
+    userId: EMPLOYEE,
+    leaveTypeId: LEAVE_TYPE,
+    accrualPerMonth: 1.5,
+    effectiveFrom: "2027-01-01",
+  };
+
+  it("GET /api/audit/:userId returns 404 for a well-formed unknown employee", async () => {
+    state.session = sessionFor("hr_admin");
+    state.auditReport = null;
+
+    const response = await getAuditReport(get(`/api/audit/${UNKNOWN}`), {
+      params: Promise.resolve({ userId: UNKNOWN }),
+    });
+
+    expect(response.status).toBe(404);
+    await expectError(response, "NOT_FOUND");
+  });
+
+  it("POST /api/policies returns 400 for a past effective month", async () => {
+    state.session = sessionFor("hr_admin");
+    state.policyError = new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      "Policy changes cannot apply to a past month.",
+      400,
+    );
+
+    const response = await postPolicy(post("/api/policies", policyBody));
+
+    expect(response.status).toBe(400);
+    await expectError(response, "VALIDATION_ERROR");
+  });
+
+  it("POST /api/policies returns 404 for an unknown employee", async () => {
+    state.session = sessionFor("hr_admin");
+    state.policyError = new AppError(
+      ERROR_CODES.NOT_FOUND,
+      "No employee record matches that account.",
+      404,
+    );
+
+    const response = await postPolicy(post("/api/policies", policyBody));
+
+    expect(response.status).toBe(404);
+    await expectError(response, "NOT_FOUND");
+  });
+
+  it("POST /api/leave-requests/:id/decision returns 404 for a well-formed unknown id", async () => {
+    state.session = sessionFor("manager");
+    state.decideError = new AppError(ERROR_CODES.NOT_FOUND, "Leave request not found.", 404);
+
+    const response = await postDecision(
+      post(`/api/leave-requests/${UNKNOWN}/decision`, { decision: "approved" }),
+      { params: Promise.resolve({ id: UNKNOWN }) },
+    );
+
+    expect(response.status).toBe(404);
+    await expectError(response, "NOT_FOUND");
+  });
+
+  it("POST /api/leave-requests/:id/override returns 404 for a well-formed unknown id", async () => {
+    state.session = sessionFor("hr_admin");
+    state.overrideError = new AppError(ERROR_CODES.NOT_FOUND, "Leave request not found.", 404);
+
+    const response = await postOverride(
+      post(`/api/leave-requests/${UNKNOWN}/override`, {
+        override: true,
+        decision: "approved",
+        reason: "Manager unavailable",
+      }),
+      { params: Promise.resolve({ id: UNKNOWN }) },
+    );
+
+    expect(response.status).toBe(404);
+    await expectError(response, "NOT_FOUND");
+  });
+
+  it("POST /api/leave-requests/:id/override rejects override:false with 400", async () => {
+    state.session = sessionFor("hr_admin");
+
+    const response = await postOverride(
+      post(`/api/leave-requests/${REQUEST}/override`, {
+        override: false,
+        decision: "approved",
+        reason: "Manager unavailable",
+      }),
+      { params: Promise.resolve({ id: REQUEST }) },
+    );
+
+    expect(response.status).toBe(400);
+    await expectError(response, "VALIDATION_ERROR");
+  });
 });
