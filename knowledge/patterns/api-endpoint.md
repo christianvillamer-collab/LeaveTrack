@@ -54,3 +54,30 @@ export const POST = withApiHandler(
 - [ ] Tests: success, validation, unauthenticated, forbidden, scope isolation, and DB integration
       when the route writes.
 - [ ] Update `docs/dev-tasks` status and add a route entry to the README/arch if new.
+
+## Handler-level mock tests (E2-15)
+
+`tests/route-auth-matrix.test.ts` and its companion suites test route handlers directly, so the
+authorization/envelope contract is enforced in CI without a database. The non-obvious constraints:
+
+- Keep the real `lib/auth/policy.ts` and real Zod schemas unmocked; mock only `getSession` and the
+  `lib/db/*` modules. That way 401/403/404/409 come from production code, not test doubles.
+- Mock `@/lib/config/env` through `vi.hoisted` with `LOG_LEVEL: "silent"` and a dummy
+  `CRON_SECRET`. Pino reads the level at module load; the mock must be hoisted above the logger's
+  import, otherwise output leaks. The mock bypasses env's zod enum, so these short values are fine.
+- Construct DB-thrown errors in tests with `new AppError(ERROR_CODES.CONFLICT, message, 409)` (and
+  the matching `NOT_FOUND` / `VALIDATION_ERROR` codes). `AppError` has no `.conflict()` helper.
+  Have the mocked DB function throw the state-held error so the handler's `withApiHandler` maps it
+  to the real envelope.
+- Assert the full envelope, not just the status: `{ success:false, error:{ code, message } }` for
+  failures and `{ success:true, data }` for successes. Remember `{ successStatus: 201 }` on creates.
+- Guard against silent coverage gaps with a filesystem-driven check: walk `app/api/**/route.ts`,
+  derive each path (normalize `[param]` to `:param`) and each exported `GET|POST|...` verb, and fail
+  if any has no matrix case. A fixed `toHaveLength(N)` on a hand-maintained table lets new routes
+  escape.
+- Cron jobs are bearer-only and never call `getSession`; assert `getSession` is unused and compare
+  the accrual period to `accrualPeriod()` rather than a loose regex. Proxy bypass belongs in
+  `tests/proxy-auth.test.ts`, not the handler suite.
+
+These suites run in `npm run test` (empty env, fully mocked DB) and never touch `test:db`'s database,
+so there is no DB-suite concurrency. See `knowledge/retros/e2-15.md`.
