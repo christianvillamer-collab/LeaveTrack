@@ -1,7 +1,7 @@
 # Deployment plan — audit timestamp hydration fix
 
 **Date:** 2026-11-18  
-**Status:** Prepared, awaiting approval. No production deploy has been performed.
+**Status:** Approved. Cron fix pending merge; no production deploy has been performed.
 
 ## 1. Goal
 
@@ -17,8 +17,10 @@ build currently appears to predate the merged E2-11 HR-override work.
 - **CI/CD:** GitHub Actions — `.github/workflows/ci.yml` (quality + DB) and
   `.github/workflows/load-800.yml` (weekly/manual E2-14 harness). CI runs on PRs
   and on pushes to `main`; a branch push alone does not trigger it.
-- **Deployment target:** Vercel (`https://leave-track-psi.vercel.app/`), with
-  `vercel.json` crons calling `/api/jobs/accrual` and `/api/jobs/notifications`.
+- **Deployment target:** Vercel (`https://leave-track-psi.vercel.app/`).
+  `vercel.json` keeps the monthly `/api/jobs/accrual` cron and schedules
+  `/api/jobs/notifications` daily. Vercel Hobby rejects the former `*/15 * * * *`
+  expression; both jobs require the `CRON_SECRET` environment variable.
 - **Data/identity:** Supabase Auth + Supabase Postgres. The app uses the pooled
   connection string; migrations/seed/tests require the direct owner connection.
   `.env.local` and `.env.github` are gitignored and must stay local.
@@ -29,10 +31,13 @@ build currently appears to predate the merged E2-11 HR-override work.
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `lib/utils/format.ts`                         | `formatDateTime()` uses an explicit UTC `Intl.DateTimeFormat` instead of local-time `date-fns format`.          |
 | `tests/format.test.ts`                        | Regression test switches `TZ` between `Asia/Manila` and `America/Los_Angeles` and asserts identical UTC output. |
+| `vercel.json`                                 | Change the notifications cron from `*/15 * * * *` to the Hobby-compatible `0 6 * * *`.                          |
 | `docs/deployment/audit-hydration-fix-plan.md` | This plan.                                                                                                      |
+| `README.md`                                   | Describe the daily Vercel notifications cron.                                                                   |
 
-No schema changes, migrations, seed changes, dependency changes, or new environment
-variables are introduced by this fix.
+No schema changes, migrations, seed changes, or dependency changes are introduced.
+No new environment variable names are introduced: `CRON_SECRET` already exists in
+the app but must be set in Vercel Production for the cron endpoints to run.
 
 ## 4. Branch and PR strategy
 
@@ -53,7 +58,10 @@ variables are introduced by this fix.
       (expected: 198 passing unit tests; DB suites are separate via `npm run test:db`).
 - [ ] Browser smoke on a local production build with a non-UTC browser timezone:
       sign in as HR, open `/audit`, confirm **0 console errors** and UTC timestamps.
-- [ ] PR merged; record the merge commit SHA.
+- [ ] PR merged; record the merge commit SHA. The cron change in this PR must be
+      merged first — otherwise Vercel will keep rejecting every new deployment.
+- [ ] Vercel Production has `CRON_SECRET` set; both cron routes fail closed with
+      503 when it is missing.
 - [ ] Vercel deployment for that exact SHA is `Ready`; confirm the SHA shown in the
       deployment matches the merge commit.
 - [ ] Vercel → Project Settings → Environment Variables contains (values checked,
@@ -89,12 +97,15 @@ variables are introduced by this fix.
 - [ ] HR `/audit` with browser timezone `Asia/Manila` (or a DevTools timezone
       override): **0 console errors**, no React `#418`, timestamps in UTC.
 - [ ] Vercel Runtime Logs show no new hydration or auth errors during the smoke.
-- [ ] Cron endpoints return 401/503 without the bearer secret and succeed with it;
+- [ ] Cron endpoints return 401/503 without the bearer secret and 200 with it;
       the notification outbox rows are `sent`/`skipped` as expected.
+- [ ] Vercel Cron Jobs lists both schedules: monthly `/api/jobs/accrual` and daily
+      `/api/jobs/notifications` (`0 6 * * *`).
 
 ## 8. Rollback
 
-- No database rollback is required — this change touches only rendering and tests.
+- No database rollback is required — this change touches rendering, tests, and
+  scheduling config only.
 - In Vercel, **Promote to Production** the previous known-good deployment (or
   redeploy the previous SHA). Confirm `/api/health` and `/audit` afterward.
 - If a verification failure is caused by environment configuration, correct the
@@ -108,5 +119,9 @@ variables are introduced by this fix.
 - The demo leave requests already changed during browser testing (one approved,
   one HR-override-rejected) and the E2-14 load-test Auth users remain in Supabase.
   This deploy neither cleans up nor depends on that data.
+- Notifications are drained at most once per day on the Vercel Hobby plan; the
+  in-app rows still appear immediately, but email delivery can be delayed by up
+  to a day. If `CRON_SECRET` is removed or rotated without updating Vercel, both
+  cron endpoints fail closed.
 - E2-14's p95 and zero-error acceptance criteria remain unmet; this fix does not
   address them.

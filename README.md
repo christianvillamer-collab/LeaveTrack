@@ -383,8 +383,8 @@ deliver in-app immediately and email from a cron worker.
 - **Bounded retries.** The worker leases up to 25 due rows with `for update skip locked`, sends them
   one at a time, and records `sent`, `failed` (exponential backoff, terminal after
   `MAX_EMAIL_ATTEMPTS = 5`), or `skipped` (transport not configured). A bad address fails only its
-  own row. `vercel.json` schedules the job every 15 minutes; Hobby only allows daily crons, so use
-  Pro or an external scheduler there.
+  own row. `vercel.json` schedules the job daily on Hobby (`0 6 * * *`); in-app rows appear
+  immediately, but email delivery can be delayed by up to a day.
 - **Transport.** `EMAIL_TRANSPORT=log` is the default: it reports success and contacts nobody, so
   local and demo environments need no provider. `EMAIL_TRANSPORT=resend` is a dependency-free
   `fetch` adapter behind `EMAIL_API_KEY` + `EMAIL_FROM`; both stay server-side, and a missing value
