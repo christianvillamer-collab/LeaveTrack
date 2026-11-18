@@ -20,6 +20,8 @@ export interface NotificationEvent {
   eventType: NotificationEventType;
   subject: string;
   body: string;
+  /** Designed email markup; absent for in-app rows and pre-design outbox rows. */
+  htmlBody?: string | null;
 }
 
 interface NotificationRow {
@@ -36,6 +38,7 @@ interface PendingEmailRow {
   id: string;
   subject: string;
   body: string;
+  html_body: string | null;
   recipient_email: string;
 }
 
@@ -44,6 +47,7 @@ export interface PendingEmail {
   recipientEmail: string;
   subject: string;
   body: string;
+  htmlBody: string | null;
 }
 
 export interface EmailResultOptions {
@@ -118,7 +122,8 @@ export async function enqueueNotifications(
         channel,
         status,
         subject,
-        body
+        body,
+        html_body
       )
       select
         ${event.recipientId},
@@ -128,7 +133,8 @@ export async function enqueueNotifications(
         'email',
         'pending',
         ${event.subject},
-        ${event.body}
+        ${event.body},
+        ${event.htmlBody ?? null}
       where exists (
         select 1 from users where id = ${event.recipientId} and is_active = true
       )
@@ -249,6 +255,7 @@ export async function claimPendingEmails(limit = 25): Promise<PendingEmail[]> {
       n.id,
       n.subject,
       n.body,
+      n.html_body,
       u.email as recipient_email
   `;
 
@@ -257,6 +264,7 @@ export async function claimPendingEmails(limit = 25): Promise<PendingEmail[]> {
     recipientEmail: row.recipient_email,
     subject: row.subject,
     body: row.body,
+    htmlBody: row.html_body,
   }));
 }
 

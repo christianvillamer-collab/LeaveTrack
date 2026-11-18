@@ -10,7 +10,7 @@ type Db = ReturnType<typeof getDb>;
 import { evaluateBalanceWarning } from "@/lib/domain/leave";
 import { listDirectReports } from "@/lib/db/users";
 import { enqueueNotifications } from "@/lib/db/notifications";
-import { buildNotificationCopy } from "@/lib/notifications/templates";
+import { buildNotificationEmail } from "@/lib/notifications/email-template";
 import type {
   CreateLeaveRequestResult,
   LeaveBalance,
@@ -933,7 +933,7 @@ async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisi
     // Same transaction as the decision: the outbox row either commits with it
     // or not at all. Delivery is the cron worker's job.
     const eventType = decision === "approved" ? "request_approved" : "request_rejected";
-    const copy = buildNotificationCopy({
+    const email = buildNotificationEmail({
       eventType,
       employeeName: row.employee_name,
       actorName,
@@ -951,8 +951,9 @@ async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisi
         actorId,
         leaveRequestId: requestId,
         eventType,
-        subject: copy.subject,
-        body: copy.body,
+        subject: email.subject,
+        body: email.body,
+        htmlBody: email.html,
       },
     ]);
 
@@ -1119,7 +1120,7 @@ export async function createLeaveRequest(
     // The manager is notified here; with no manager the active HR admins are.
     // Both channels are enqueued inside this transaction, never sent from it.
     const recipients = await resolveSubmissionRecipients(tx, user.manager_id);
-    const copy = buildNotificationCopy({
+    const email = buildNotificationEmail({
       eventType: "request_submitted",
       employeeName: user.name,
       actorName: user.name,
@@ -1137,8 +1138,9 @@ export async function createLeaveRequest(
         actorId: input.userId,
         leaveRequestId: inserted.id,
         eventType: "request_submitted" as const,
-        subject: copy.subject,
-        body: copy.body,
+        subject: email.subject,
+        body: email.body,
+        htmlBody: email.html,
       })),
     );
 
