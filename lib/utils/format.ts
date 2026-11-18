@@ -1,11 +1,23 @@
 import { differenceInCalendarDays, format, parseISO } from "date-fns";
 
+// Instants are rendered in UTC on both the server and the browser. Local-time
+// formatting produces different text during SSR and hydration (React #418).
+const utcDateTime = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "UTC",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
 export function formatDate(isoDate: string): string {
   return format(parseISO(isoDate), "d MMM yyyy");
 }
 
 export function formatDateTime(isoDate: string): string {
-  return format(parseISO(isoDate), "d MMM yyyy, HH:mm");
+  return utcDateTime.format(parseISO(isoDate));
 }
 
 export function formatDateRange(startDate: string, endDate: string): string {
