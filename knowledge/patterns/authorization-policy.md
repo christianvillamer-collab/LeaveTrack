@@ -50,7 +50,8 @@ canDecideRequest(actor, { ownerId, ownerManagerId, status });
   HR decisions go through `canOverrideRequest` + `POST /api/leave-requests/:id/override`.
 - An override requires the explicit `override: true` flag, a reason for approvals and rejections
   alike, and writes `decided_by` plus an audit row prefixed `HR override`. It never bypasses the
-  pending/duplicate or over-balance guards (over-balance is E2-11).
+  pending/duplicate guards. Managers keep the over-balance 409; E2-11 lets an HR override store the
+  true negative result with a distinct `hr_override_*` audit action.
 - `scope=team` stays manager-only; the SQL predicate enforces it, the policy gate does not replace it.
 - Deny by default: an unknown role or a missing relationship never grants access.
 

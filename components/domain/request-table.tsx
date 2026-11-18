@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { RequestSummary } from "@/lib/types";
+import type { PaginationMeta, RequestSummary } from "@/lib/types";
 import { formatDateRange, formatDays } from "@/lib/utils/format";
 
 export interface RequestTableProps {
@@ -21,6 +21,8 @@ export interface RequestTableProps {
   showEmployee?: boolean;
   emptyTitle?: string;
   emptyDescription?: string;
+  pagination?: PaginationMeta;
+  pageHref?: (page: number) => string;
 }
 
 export function RequestTable({
@@ -28,9 +30,50 @@ export function RequestTable({
   showEmployee = false,
   emptyTitle = "No leave requests yet",
   emptyDescription = "When a request is submitted it will appear here with its decision status.",
+  pagination,
+  pageHref,
 }: RequestTableProps) {
+  const paginationNav =
+    pagination && pageHref ? (
+      <nav
+        aria-label="Request pages"
+        className="border-border flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <p className="text-caption text-muted-foreground" role="status" aria-live="polite">
+          {pagination.total} requests · Page {pagination.page} of {pagination.pageCount}
+        </p>
+        <div className="flex items-center gap-2">
+          {pagination.page > 1 ? (
+            <Link
+              href={pageHref(pagination.page - 1)}
+              className="text-small text-primary hover:text-primary-hover focus-visible:ring-ring rounded-sm font-semibold focus-visible:ring-2 focus-visible:outline-none"
+            >
+              Previous
+            </Link>
+          ) : (
+            <span className="text-muted-foreground text-small">Previous</span>
+          )}
+          {pagination.page < pagination.pageCount ? (
+            <Link
+              href={pageHref(pagination.page + 1)}
+              className="text-small text-primary hover:text-primary-hover focus-visible:ring-ring rounded-sm font-semibold focus-visible:ring-2 focus-visible:outline-none"
+            >
+              Next
+            </Link>
+          ) : (
+            <span className="text-muted-foreground text-small">Next</span>
+          )}
+        </div>
+      </nav>
+    ) : null;
+
   if (requests.length === 0) {
-    return <EmptyState icon={FileText} title={emptyTitle} description={emptyDescription} />;
+    return (
+      <>
+        <EmptyState icon={FileText} title={emptyTitle} description={emptyDescription} />
+        {pagination && pagination.total > 0 ? paginationNav : null}
+      </>
+    );
   }
 
   return (
@@ -129,6 +172,8 @@ export function RequestTable({
           </li>
         ))}
       </ul>
+
+      {paginationNav}
     </>
   );
 }

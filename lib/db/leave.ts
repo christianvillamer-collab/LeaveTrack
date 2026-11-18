@@ -1,29 +1,41 @@
 import "server-only";
 
+import type { TransactionSql } from "postgres";
+
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { Role } from "@/lib/auth/roles";
 import { getDb } from "@/lib/db/client";
+
+type Db = ReturnType<typeof getDb>;
 import { evaluateBalanceWarning } from "@/lib/domain/leave";
 import { listDirectReports } from "@/lib/db/users";
+import { enqueueNotifications } from "@/lib/db/notifications";
+import { buildNotificationCopy } from "@/lib/notifications/templates";
 import type {
   CreateLeaveRequestResult,
   LeaveBalance,
   LeaveDecisionResult,
   LeaveRequestDetail,
+  LeaveRequestListOptions,
   LeaveType,
   MyLeaveData,
   MyLeaveRequest,
+  Paginated,
   RequestStatus,
   RequestSummary,
   TeamLeaveData,
   TeamLeaveRequest,
 } from "@/lib/types";
+import { toPaginationMeta } from "@/lib/validation/list";
 import {
   countLeaveDays,
   formatDateRange,
   formatDays,
   formatRequestReference,
 } from "@/lib/utils/format";
+
+/** Mirrors `leave_balances_balance_check` in migration 0007. */
+const MIN_OVERDRAWN_BALANCE = -10000;
 
 interface LeaveTypeRow {
   id: string;
@@ -40,6 +52,7 @@ interface BalanceRow extends LeaveTypeRow {
 
 interface UserRow {
   id: string;
+  name: string;
   manager_id: string | null;
 }
 
@@ -49,6 +62,7 @@ interface InsertedRequestRow {
 }
 
 interface MyLeaveRequestRow {
+  total: number;
   id: string;
   start_date: string;
   end_date: string;
@@ -105,6 +119,9 @@ interface DecisionRow {
   manager_id: string | null;
   leave_type_name: string;
   tracks_balance: boolean;
+  start_date: string;
+  end_date: string;
+  employee_name: string;
 }
 
 export interface CreateLeaveRequestInput {
@@ -176,6 +193,56 @@ function toRequestStatus(status: string): RequestStatus {
   throw new AppError(ERROR_CODES.INTERNAL_ERROR, "A leave request has an unsupported status.", 500);
 }
 
+interface RequestQueryOptions {
+  status?: RequestStatus;
+  page?: number;
+  pageSize?: number;
+}
+
+function listBounds(options?: RequestQueryOptions) {
+  const page = options?.page;
+  const pageSize = options?.pageSize;
+  const paged = page !== undefined && pageSize !== undefined;
+
+  return {
+    status: options?.status ?? null,
+    limit: paged ? pageSize : null,
+    offset: paged ? (page - 1) * pageSize : null,
+  };
+}
+
+/**
+ * Count queries reuse the exact row WHERE fragments. `count(*) over ()` cannot
+ * report a total when OFFSET returns zero rows, so an empty page falls back to
+ * one of these counts with the same predicates.
+ */
+function myRequestFilter(db: Db, userId: string, status: RequestStatus | null) {
+  return db`
+    r.user_id = ${userId}
+    and r.is_deleted = false
+    and (${status}::request_status is null or r.status = ${status}::request_status)
+  `;
+}
+
+function teamRequestFilter(db: Db, managerId: string, status: RequestStatus | null) {
+  return db`
+    e.manager_id = ${managerId}
+    and r.is_deleted = false
+    and (${status}::request_status is null or r.status = ${status}::request_status)
+  `;
+}
+
+function orgRequestFilter(db: Db, status: RequestStatus | null) {
+  return db`
+    r.is_deleted = false
+    and (${status}::request_status is null or r.status = ${status}::request_status)
+  `;
+}
+
+function rowPagination(total: number, options: LeaveRequestListOptions) {
+  return toPaginationMeta(total, options.page, options.pageSize);
+}
+
 export async function getBalancesForUser(userId: string): Promise<LeaveBalance[]> {
   const rows = await getDb()<BalanceRow[]>`
     select
@@ -236,26 +303,8 @@ export async function getBalancesForUser(userId: string): Promise<LeaveBalance[]
   }));
 }
 
-export async function listMyLeaveRequests(userId: string): Promise<MyLeaveRequest[]> {
-  const rows = await getDb()<MyLeaveRequestRow[]>`
-    select
-      r.id,
-      r.start_date::text as start_date,
-      r.end_date::text as end_date,
-      (r.end_date - r.start_date + 1)::int as days,
-      r.status::text as status,
-      r.created_at,
-      lt.id as leave_type_id,
-      lt.name as leave_type_name,
-      lt.tracks_balance
-    from leave_requests r
-    join leave_types lt on lt.id = r.leave_type_id
-    where r.user_id = ${userId}
-      and r.is_deleted = false
-    order by r.created_at desc
-  `;
-
-  return rows.map((row) => ({
+function toMyLeaveRequest(row: MyLeaveRequestRow): MyLeaveRequest {
+  return {
     id: row.id,
     reference: formatRequestReference(row.id),
     leaveType: toLeaveType({
@@ -268,7 +317,64 @@ export async function listMyLeaveRequests(userId: string): Promise<MyLeaveReques
     days: Number(row.days),
     status: toRequestStatus(row.status),
     createdAt: row.created_at.toISOString(),
-  }));
+  };
+}
+
+async function queryMyLeaveRequests(
+  userId: string,
+  options?: RequestQueryOptions,
+): Promise<MyLeaveRequestRow[]> {
+  const db = getDb();
+  const { status, limit, offset } = listBounds(options);
+  const filter = myRequestFilter(db, userId, status);
+
+  return db<MyLeaveRequestRow[]>`
+    select
+      count(*) over ()::int as total,
+      r.id,
+      r.start_date::text as start_date,
+      r.end_date::text as end_date,
+      (r.end_date - r.start_date + 1)::int as days,
+      r.status::text as status,
+      r.created_at,
+      lt.id as leave_type_id,
+      lt.name as leave_type_name,
+      lt.tracks_balance
+    from leave_requests r
+    join leave_types lt on lt.id = r.leave_type_id
+    where ${filter}
+    order by r.created_at desc, r.id desc
+    limit ${limit}
+    offset ${offset}
+  `;
+}
+
+async function countMyLeaveRequests(userId: string, status: RequestStatus | null): Promise<number> {
+  const db = getDb();
+  const [row] = await db<{ total: number }[]>`
+    select count(*)::int as total
+    from leave_requests r
+    where ${myRequestFilter(db, userId, status)}
+  `;
+  return row?.total ?? 0;
+}
+
+export async function listMyLeaveRequests(userId: string): Promise<MyLeaveRequest[]> {
+  const rows = await queryMyLeaveRequests(userId);
+  return rows.map(toMyLeaveRequest);
+}
+
+export async function listMyLeaveRequestsPage(
+  userId: string,
+  options: LeaveRequestListOptions,
+): Promise<Paginated<MyLeaveRequest>> {
+  const rows = await queryMyLeaveRequests(userId, options);
+  const total = rows[0]?.total ?? (await countMyLeaveRequests(userId, options.status ?? null));
+
+  return {
+    items: rows.map(toMyLeaveRequest),
+    pagination: rowPagination(total, options),
+  };
 }
 
 export async function getMyLeaveData(userId: string): Promise<MyLeaveData> {
@@ -285,43 +391,29 @@ export interface ScopedActor {
   role: Role;
 }
 
+function scopedRequestFilter(db: Db, actor: ScopedActor, status: RequestStatus | null) {
+  return db`
+    r.is_deleted = false
+    and (
+      (${actor.role} = 'employee' and r.user_id = ${actor.id})
+      or (
+        ${actor.role} = 'manager'
+        and (r.user_id = ${actor.id} or e.manager_id = ${actor.id})
+      )
+      or (${actor.role} = 'hr_admin')
+    )
+    and (${status}::request_status is null or r.status = ${status}::request_status)
+  `;
+}
+
 /**
  * The scoped `/requests` list. Role picks the branch, but every scope predicate
  * stays in SQL: employees read their own rows, managers read their own plus
  * direct reports (`e.manager_id = :current_user_id`), and HR reads all. Unknown
  * roles match no branch, so the default is deny.
  */
-export async function listScopedLeaveRequests(actor: ScopedActor): Promise<RequestSummary[]> {
-  const rows = await getDb()<ScopedRequestRow[]>`
-    select
-      r.id,
-      r.start_date::text as start_date,
-      r.end_date::text as end_date,
-      (r.end_date - r.start_date + 1)::int as days,
-      r.status::text as status,
-      r.created_at,
-      lt.id as leave_type_id,
-      lt.name as leave_type_name,
-      lt.tracks_balance,
-      e.id as employee_id,
-      e.name as employee_name,
-      e.email as employee_email
-    from leave_requests r
-    join users e on e.id = r.user_id
-    join leave_types lt on lt.id = r.leave_type_id
-    where r.is_deleted = false
-      and (
-        (${actor.role} = 'employee' and r.user_id = ${actor.id})
-        or (
-          ${actor.role} = 'manager'
-          and (r.user_id = ${actor.id} or e.manager_id = ${actor.id})
-        )
-        or (${actor.role} = 'hr_admin')
-      )
-    order by r.created_at desc
-  `;
-
-  return rows.map((row) => ({
+function toRequestSummary(row: ScopedRequestRow): RequestSummary {
+  return {
     id: row.id,
     reference: formatRequestReference(row.id),
     employee: {
@@ -339,7 +431,72 @@ export async function listScopedLeaveRequests(actor: ScopedActor): Promise<Reque
     days: Number(row.days),
     status: toRequestStatus(row.status),
     createdAt: row.created_at.toISOString(),
-  }));
+  };
+}
+
+async function queryScopedLeaveRequests(
+  actor: ScopedActor,
+  options?: RequestQueryOptions,
+): Promise<ScopedRequestRow[]> {
+  const db = getDb();
+  const { status, limit, offset } = listBounds(options);
+  const filter = scopedRequestFilter(db, actor, status);
+
+  return db<ScopedRequestRow[]>`
+    select
+      count(*) over ()::int as total,
+      r.id,
+      r.start_date::text as start_date,
+      r.end_date::text as end_date,
+      (r.end_date - r.start_date + 1)::int as days,
+      r.status::text as status,
+      r.created_at,
+      lt.id as leave_type_id,
+      lt.name as leave_type_name,
+      lt.tracks_balance,
+      e.id as employee_id,
+      e.name as employee_name,
+      e.email as employee_email
+    from leave_requests r
+    join users e on e.id = r.user_id
+    join leave_types lt on lt.id = r.leave_type_id
+    where ${filter}
+    order by r.created_at desc, r.id desc
+    limit ${limit}
+    offset ${offset}
+  `;
+}
+
+async function countScopedLeaveRequests(
+  actor: ScopedActor,
+  status: RequestStatus | null,
+): Promise<number> {
+  const db = getDb();
+  const [row] = await db<{ total: number }[]>`
+    select count(*)::int as total
+    from leave_requests r
+    join users e on e.id = r.user_id
+    where ${scopedRequestFilter(db, actor, status)}
+  `;
+  return row?.total ?? 0;
+}
+
+export async function listScopedLeaveRequests(actor: ScopedActor): Promise<RequestSummary[]> {
+  const rows = await queryScopedLeaveRequests(actor);
+  return rows.map(toRequestSummary);
+}
+
+export async function listScopedLeaveRequestsPage(
+  actor: ScopedActor,
+  options: LeaveRequestListOptions,
+): Promise<Paginated<RequestSummary>> {
+  const rows = await queryScopedLeaveRequests(actor, options);
+  const total = rows[0]?.total ?? (await countScopedLeaveRequests(actor, options.status ?? null));
+
+  return {
+    items: rows.map(toRequestSummary),
+    pagination: rowPagination(total, options),
+  };
 }
 
 /** One active (not soft-deleted) request with its owner, manager, and decision. */
@@ -439,9 +596,17 @@ function toTeamLeaveRequest(row: TeamLeaveRequestRow): TeamLeaveRequest {
  * The direct-report predicate is intentionally in SQL. Never fetch the team
  * and filter by manager in application code.
  */
-export async function listTeamLeaveRequests(managerId: string): Promise<TeamLeaveRequest[]> {
-  const rows = await getDb()<TeamLeaveRequestRow[]>`
+async function queryTeamLeaveRequests(
+  managerId: string,
+  options?: RequestQueryOptions,
+): Promise<TeamLeaveRequestRow[]> {
+  const db = getDb();
+  const { status, limit, offset } = listBounds(options);
+  const filter = teamRequestFilter(db, managerId, status);
+
+  return db<TeamLeaveRequestRow[]>`
     select
+      count(*) over ()::int as total,
       r.id,
       r.start_date::text as start_date,
       r.end_date::text as end_date,
@@ -458,12 +623,43 @@ export async function listTeamLeaveRequests(managerId: string): Promise<TeamLeav
     from leave_requests r
     join users e on e.id = r.user_id
     join leave_types lt on lt.id = r.leave_type_id
-    where e.manager_id = ${managerId}
-      and r.is_deleted = false
-    order by r.created_at desc
+    where ${filter}
+    order by r.created_at desc, r.id desc
+    limit ${limit}
+    offset ${offset}
   `;
+}
 
+async function countTeamLeaveRequests(
+  managerId: string,
+  status: RequestStatus | null,
+): Promise<number> {
+  const db = getDb();
+  const [row] = await db<{ total: number }[]>`
+    select count(*)::int as total
+    from leave_requests r
+    join users e on e.id = r.user_id
+    where ${teamRequestFilter(db, managerId, status)}
+  `;
+  return row?.total ?? 0;
+}
+
+export async function listTeamLeaveRequests(managerId: string): Promise<TeamLeaveRequest[]> {
+  const rows = await queryTeamLeaveRequests(managerId);
   return rows.map(toTeamLeaveRequest);
+}
+
+export async function listTeamLeaveRequestsPage(
+  managerId: string,
+  options: LeaveRequestListOptions,
+): Promise<Paginated<TeamLeaveRequest>> {
+  const rows = await queryTeamLeaveRequests(managerId, options);
+  const total = rows[0]?.total ?? (await countTeamLeaveRequests(managerId, options.status ?? null));
+
+  return {
+    items: rows.map(toTeamLeaveRequest),
+    pagination: rowPagination(total, options),
+  };
 }
 
 /**
@@ -471,9 +667,16 @@ export async function listTeamLeaveRequests(managerId: string): Promise<TeamLeav
  * path keeps its `e.manager_id = :current_user_id` predicate, and HR never
  * passes through `scope=team`.
  */
-export async function listOrgLeaveRequests(): Promise<TeamLeaveRequest[]> {
-  const rows = await getDb()<TeamLeaveRequestRow[]>`
+async function queryOrgLeaveRequests(
+  options?: RequestQueryOptions,
+): Promise<TeamLeaveRequestRow[]> {
+  const db = getDb();
+  const { status, limit, offset } = listBounds(options);
+  const filter = orgRequestFilter(db, status);
+
+  return db<TeamLeaveRequestRow[]>`
     select
+      count(*) over ()::int as total,
       r.id,
       r.start_date::text as start_date,
       r.end_date::text as end_date,
@@ -490,11 +693,38 @@ export async function listOrgLeaveRequests(): Promise<TeamLeaveRequest[]> {
     from leave_requests r
     join users e on e.id = r.user_id
     join leave_types lt on lt.id = r.leave_type_id
-    where r.is_deleted = false
-    order by r.created_at desc
+    where ${filter}
+    order by r.created_at desc, r.id desc
+    limit ${limit}
+    offset ${offset}
   `;
+}
 
+async function countOrgLeaveRequests(status: RequestStatus | null): Promise<number> {
+  const db = getDb();
+  const [row] = await db<{ total: number }[]>`
+    select count(*)::int as total
+    from leave_requests r
+    where ${orgRequestFilter(db, status)}
+  `;
+  return row?.total ?? 0;
+}
+
+export async function listOrgLeaveRequests(): Promise<TeamLeaveRequest[]> {
+  const rows = await queryOrgLeaveRequests();
   return rows.map(toTeamLeaveRequest);
+}
+
+export async function listOrgLeaveRequestsPage(
+  options: LeaveRequestListOptions,
+): Promise<Paginated<TeamLeaveRequest>> {
+  const rows = await queryOrgLeaveRequests(options);
+  const total = rows[0]?.total ?? (await countOrgLeaveRequests(options.status ?? null));
+
+  return {
+    items: rows.map(toTeamLeaveRequest),
+    pagination: rowPagination(total, options),
+  };
 }
 
 export async function getTeamLeaveData(managerId: string): Promise<TeamLeaveData> {
@@ -513,17 +743,45 @@ interface ApplyDecisionOptions {
   decision: "approved" | "rejected";
   note: string | null;
   isOverride: boolean;
+  /** HR-only: permit a negative resulting balance instead of a 409 (E2-11). */
+  allowOverBalance: boolean;
   /** Relationship-specific gate; runs after the row lock, before status checks. */
   authorize: (row: DecisionRow) => void;
 }
 
 /**
+ * A submission with no manager goes to every active HR admin; the submit
+ * screen already tells the employee it is an HR review. Recipients are
+ * resolved in SQL, never taken from the request body.
+ */
+async function resolveSubmissionRecipients(
+  tx: TransactionSql,
+  managerId: string | null,
+): Promise<string[]> {
+  if (managerId) {
+    return [managerId];
+  }
+
+  const rows = await tx<{ id: string }[]>`
+    select id
+    from users
+    where role = 'hr_admin'
+      and is_active = true
+    order by name
+  `;
+
+  return rows.map((row) => row.id);
+}
+
+/**
  * One transactional decision path for managers and HR overrides. The lock →
  * relationship gate → pending check → balance decrement → status update →
- * audit insert sequence must not fork, or the two modes drift apart.
+ * audit insert sequence must not fork, or the two modes drift apart. Only the
+ * HR override path may cross a short balance; managers keep the 409.
  */
 async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisionResult> {
-  const { requestId, actorId, actorName, decision, note, isOverride, authorize } = options;
+  const { requestId, actorId, actorName, decision, note, isOverride, allowOverBalance, authorize } =
+    options;
 
   return getDb().begin(async (tx) => {
     const [row] = await tx<DecisionRow[]>`
@@ -534,6 +792,9 @@ async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisi
         (r.end_date - r.start_date + 1)::int as days,
         r.status::text as status,
         e.manager_id,
+        r.start_date::text as start_date,
+        r.end_date::text as end_date,
+        e.name as employee_name,
         lt.name as leave_type_name,
         lt.tracks_balance
       from leave_requests r
@@ -561,6 +822,7 @@ async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisi
     });
     const days = Number(row.days);
     let balance: LeaveDecisionResult["balance"] = null;
+    let overBalance = false;
 
     if (decision === "approved" && leaveType.tracksBalance) {
       const [balanceRow] = await tx<{ balance: string }[]>`
@@ -574,21 +836,44 @@ async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisi
       const previous = Number(balanceRow?.balance ?? 0);
 
       if (!balanceRow || previous < days) {
+        if (!allowOverBalance) {
+          throw new AppError(
+            ERROR_CODES.CONFLICT,
+            "The employee's confirmed balance is lower than the requested days, so this request cannot be approved.",
+            409,
+          );
+        }
+
+        overBalance = true;
+      }
+
+      // An HR over-balance approval records the true (possibly negative)
+      // result; it never clamps the balance back to zero.
+      const next = previous - days;
+
+      if (next < MIN_OVERDRAWN_BALANCE) {
         throw new AppError(
           ERROR_CODES.CONFLICT,
-          "The employee's confirmed balance is lower than the requested days, so this request cannot be approved.",
+          "This approval would exceed the permitted overdrawn balance limit.",
           409,
         );
       }
 
-      const next = previous - days;
-
-      await tx`
-        update leave_balances
-        set balance = ${next}
-        where user_id = ${row.user_id}
-          and leave_type_id = ${leaveType.id}
-      `;
+      if (!balanceRow) {
+        // A tracked type should always have a row, but an HR over-balance
+        // approval must still record the result if one is missing.
+        await tx`
+          insert into leave_balances (user_id, leave_type_id, balance)
+          values (${row.user_id}, ${leaveType.id}, ${next})
+        `;
+      } else {
+        await tx`
+          update leave_balances
+          set balance = ${next}
+          where user_id = ${row.user_id}
+            and leave_type_id = ${leaveType.id}
+        `;
+      }
 
       balance = {
         leaveTypeId: leaveType.id,
@@ -609,10 +894,20 @@ async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisi
       where id = ${requestId}
     `;
 
+    // Distinct audit actions make overrides filterable without parsing the
+    // detail prefix (E2-11). Manager decisions keep the original values.
+    const auditAction = isOverride
+      ? decision === "approved"
+        ? "hr_override_approved"
+        : "hr_override_rejected"
+      : decision;
+
     const detail = isOverride
       ? decision === "approved"
         ? balance
-          ? `HR override — approved by ${actorName}: ${note}. ${leaveType.name} balance reduced by ${formatDays(days)} (${balance.previous} → ${balance.next}).`
+          ? overBalance
+            ? `HR override — approved by ${actorName}: ${note}. Over-balance approval: ${leaveType.name} balance reduced by ${formatDays(days)} (${balance.previous} → ${balance.next}).`
+            : `HR override — approved by ${actorName}: ${note}. ${leaveType.name} balance reduced by ${formatDays(days)} (${balance.previous} → ${balance.next}).`
           : `HR override — approved by ${actorName}: ${note}. No balance change.`
         : `HR override — rejected by ${actorName}: ${note}. No balance change.`
       : decision === "approved"
@@ -630,10 +925,36 @@ async function applyDecision(options: ApplyDecisionOptions): Promise<LeaveDecisi
       ) values (
         ${requestId},
         ${actorId},
-        ${decision},
+        ${auditAction},
         ${detail}
       )
     `;
+
+    // Same transaction as the decision: the outbox row either commits with it
+    // or not at all. Delivery is the cron worker's job.
+    const eventType = decision === "approved" ? "request_approved" : "request_rejected";
+    const copy = buildNotificationCopy({
+      eventType,
+      employeeName: row.employee_name,
+      actorName,
+      leaveTypeName: leaveType.name,
+      startDate: row.start_date,
+      endDate: row.end_date,
+      days,
+      note,
+      isOverride,
+    });
+
+    await enqueueNotifications(tx, [
+      {
+        recipientId: row.user_id,
+        actorId,
+        leaveRequestId: requestId,
+        eventType,
+        subject: copy.subject,
+        body: copy.body,
+      },
+    ]);
 
     return {
       request: {
@@ -662,6 +983,7 @@ export async function decideLeaveRequest(
     decision: input.decision,
     note,
     isOverride: false,
+    allowOverBalance: false,
     authorize: (row) => {
       if (row.manager_id !== input.managerId) {
         throw AppError.forbidden("You can only decide requests from your direct reports.");
@@ -671,8 +993,9 @@ export async function decideLeaveRequest(
 }
 
 /**
- * HR cross-team override. This bypasses the direct-manager relationship, never
- * the pending/duplicate or over-balance guards, and always requires a reason.
+ * HR cross-team override. This bypasses the direct-manager relationship and,
+ * for approvals only, the over-balance guard (E2-11). The pending/duplicate
+ * guards remain, and a reason is always required.
  */
 export async function overrideLeaveRequest(
   input: OverrideLeaveRequestInput,
@@ -690,6 +1013,7 @@ export async function overrideLeaveRequest(
     decision: input.decision,
     note,
     isOverride: true,
+    allowOverBalance: true,
     authorize: (row) => {
       if (row.user_id === input.actorId) {
         throw AppError.forbidden("You cannot override a decision on your own request.");
@@ -715,7 +1039,7 @@ export async function createLeaveRequest(
 
   return db.begin(async (tx) => {
     const [user] = await tx<UserRow[]>`
-      select id, manager_id
+      select id, name, manager_id
       from users
       where id = ${input.userId}
       limit 1
@@ -791,6 +1115,32 @@ export async function createLeaveRequest(
         ${`Leave request submitted for ${formatDateRange(input.startDate, input.endDate)} (${formatDays(requestedDays)}).`}
       )
     `;
+
+    // The manager is notified here; with no manager the active HR admins are.
+    // Both channels are enqueued inside this transaction, never sent from it.
+    const recipients = await resolveSubmissionRecipients(tx, user.manager_id);
+    const copy = buildNotificationCopy({
+      eventType: "request_submitted",
+      employeeName: user.name,
+      actorName: user.name,
+      leaveTypeName: leaveType.name,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      days: requestedDays,
+      reason: input.reason,
+    });
+
+    await enqueueNotifications(
+      tx,
+      recipients.map((recipientId) => ({
+        recipientId,
+        actorId: input.userId,
+        leaveRequestId: inserted.id,
+        eventType: "request_submitted" as const,
+        subject: copy.subject,
+        body: copy.body,
+      })),
+    );
 
     return {
       request: {

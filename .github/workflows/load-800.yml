@@ -1,0 +1,100 @@
+name: E2-14 load test (800 users)
+
+# Weekly + manual only. Never runs on push/PR: it needs Supabase Auth secrets,
+# provisions hundreds of auth users, and writes a performance report.
+on:
+  schedule:
+    - cron: "0 3 * * 1" # Monday 03:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: e2-14-load-800
+  cancel-in-progress: false
+
+env:
+  HUSKY: "0"
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  load-800:
+    name: 800-user HTTP load test
+    runs-on: ubuntu-latest
+    # Fail-closed gate: the job is skipped unless the repo variable is enabled.
+    if: vars.E2_14_LOAD_TEST_ENABLED == 'true'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: leavetrack
+          POSTGRES_PASSWORD: leavetrack
+          POSTGRES_DB: leavetrack_e214_load
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U leavetrack -d leavetrack_e214_load"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # The harness refuses any other URLs. See scripts/load-test-800.mjs.
+      DATABASE_URL: postgres://leavetrack:leavetrack@localhost:55432/leavetrack_e214_load
+      DIRECT_URL: postgres://leavetrack:leavetrack@localhost:55432/leavetrack_e214_load
+      PGSSLMODE: disable
+      LOAD_TEST_BASE_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      # Supabase Auth is required for session cookies; the service role key is
+      # used only by the harness to provision seeded identities.
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SEED_AUTH_PASSWORD: ${{ secrets.SEED_AUTH_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify required secrets are present
+        env:
+          SUPABASE_URL_CHECK: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          ANON_KEY_CHECK: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SERVICE_ROLE_CHECK: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PASSWORD_CHECK: ${{ secrets.SEED_AUTH_PASSWORD }}
+        run: |
+          for name in SUPABASE_URL_CHECK ANON_KEY_CHECK SERVICE_ROLE_CHECK PASSWORD_CHECK; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing load-test secret (see $name mapping in this workflow)."
+              exit 1
+            fi
+          done
+      - name: Migrate and seed the disposable load database
+        run: |
+          npm run db:migrate
+          npm run db:seed
+      - name: Build the app
+        run: npm run build
+      - name: Start the app
+        run: |
+          npm run start > /tmp/leavetrack-load-app.log 2>&1 &
+          echo $! > /tmp/leavetrack-load-app.pid
+          for attempt in $(seq 1 60); do
+            if curl --silent --fail http://localhost:3000/api/health > /dev/null; then
+              echo "App is healthy."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::App did not become healthy."
+          cat /tmp/leavetrack-load-app.log
+          exit 1
+      - name: Run the 800-user load test
+        run: npm run load:800
+      - name: Upload the E2-14 report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2-14-results
+          path: docs/performance/e2-14-results.json
+          if-no-files-found: warn
+          retention-days: 30

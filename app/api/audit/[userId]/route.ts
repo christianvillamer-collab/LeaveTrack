@@ -6,12 +6,13 @@ import { canRunAudit } from "@/lib/auth/policy";
 import { getSession } from "@/lib/auth/session";
 import { getAuditReport } from "@/lib/db/audit";
 import type { AuditReport } from "@/lib/types";
+import { auditReportQuerySchema } from "@/lib/validation/audit";
 
 export const runtime = "nodejs";
 
 export const GET = withApiHandler<AuditReport, { userId: string }>(
   "GET /api/audit/:userId",
-  async (_request, context) => {
+  async (request, context) => {
     const session = await getSession();
 
     if (!session) {
@@ -33,7 +34,25 @@ export const GET = withApiHandler<AuditReport, { userId: string }>(
       throw AppError.notFound("Employee not found.");
     }
 
-    const report = await getAuditReport(parsedId.data);
+    const param = (name: string) => request.nextUrl.searchParams.get(name) ?? undefined;
+    const query = auditReportQuerySchema.parse({
+      employee: param("employee"),
+      from: param("from"),
+      to: param("to"),
+      status: param("status"),
+      page: param("page"),
+      pageSize: param("pageSize"),
+      exportAll: param("exportAll"),
+    });
+
+    const report = await getAuditReport(parsedId.data, {
+      from: query.from,
+      to: query.to,
+      status: query.status,
+      page: query.page,
+      pageSize: query.pageSize,
+      exportAll: query.exportAll,
+    });
 
     if (!report) {
       throw AppError.notFound("Employee not found.");

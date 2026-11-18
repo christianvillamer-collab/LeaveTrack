@@ -1,6 +1,26 @@
 import type { Role } from "@/lib/auth/roles";
 
-export type RequestStatus = "pending" | "approved" | "rejected";
+export const REQUEST_STATUSES = ["pending", "approved", "rejected"] as const;
+
+export type RequestStatus = (typeof REQUEST_STATUSES)[number];
+
+export interface PaginationMeta {
+  page: number;
+  pageSize: number;
+  total: number;
+  pageCount: number;
+}
+
+export interface Paginated<T> {
+  items: T[];
+  pagination: PaginationMeta;
+}
+
+export interface LeaveRequestListOptions {
+  status?: RequestStatus;
+  page: number;
+  pageSize: number;
+}
 
 export interface Employee {
   id: string;
@@ -124,7 +144,7 @@ export interface AuditEvent {
   requestReference: string;
   employee: AuditEventPerson;
   actor: AuditEventPerson;
-  action: "submitted" | "approved" | "rejected";
+  action: "submitted" | "approved" | "rejected" | "hr_override_approved" | "hr_override_rejected";
   occurredAt: string;
   detail: string;
 }
@@ -162,6 +182,32 @@ export interface AuditReport {
   employee: AuditReportEmployee;
   requests: AuditReportRequest[];
   events: AuditEvent[];
+  pagination: PaginationMeta;
+  status?: RequestStatus;
+  exportAll?: boolean;
+}
+
+/** Optional inclusive UTC calendar bounds applied to an audit report. */
+export interface AuditDateRange {
+  /** Inclusive start date (`YYYY-MM-DD`). */
+  from?: string;
+  /** Inclusive end date (`YYYY-MM-DD`). */
+  to?: string;
+}
+
+export interface AuditReportOptions extends AuditDateRange {
+  status?: RequestStatus;
+  page?: number;
+  pageSize?: number;
+  exportAll?: boolean;
+}
+
+export interface AuditEventListOptions extends AuditDateRange {
+  limit?: number;
+  status?: RequestStatus;
+  page?: number;
+  pageSize?: number;
+  exportAll?: boolean;
 }
 
 export interface LeaveRequestWarning {
@@ -313,4 +359,35 @@ export interface PersonAuditEntry {
 export interface OrgLeaveOverview {
   requests: RequestSummary[];
   headcount: number;
+}
+
+/** Who an event is addressed to and how it is delivered. */
+export type NotificationEventType = "request_submitted" | "request_approved" | "request_rejected";
+
+export type NotificationChannel = "in_app" | "email";
+
+export type NotificationStatus = "pending" | "sent" | "failed" | "skipped";
+
+/** One row of the recipient's in-app notification list. */
+export interface NotificationItem {
+  id: string;
+  eventType: NotificationEventType;
+  subject: string;
+  body: string;
+  leaveRequestId: string;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export interface NotificationListResult {
+  items: NotificationItem[];
+  unreadCount: number;
+}
+
+/** Outcome of one delivery attempt batch from the notification cron job. */
+export interface NotificationJobResult {
+  processed: number;
+  sent: number;
+  failed: number;
+  skipped: number;
 }

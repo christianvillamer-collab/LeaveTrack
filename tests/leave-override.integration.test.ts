@@ -163,7 +163,7 @@ describe.skipIf(!hasDatabase)("HR leave override", () => {
       where leave_request_id = ${pending.request.id}
     `;
 
-    const approved = audits.filter((audit) => audit.action === "approved");
+    const approved = audits.filter((audit) => audit.action === "hr_override_approved");
     expect(approved).toHaveLength(1);
     expect(approved[0]?.actor_id).toBe(priya.id);
     expect(approved[0]?.detail).toMatch(/^HR override — approved by /);
@@ -200,7 +200,7 @@ describe.skipIf(!hasDatabase)("HR leave override", () => {
       where leave_request_id = ${pending.request.id}
     `;
 
-    const rejected = audits.filter((audit) => audit.action === "rejected");
+    const rejected = audits.filter((audit) => audit.action === "hr_override_rejected");
     expect(rejected).toHaveLength(1);
     expect(rejected[0]?.detail).toMatch(/^HR override — rejected by /);
     expect(rejected[0]?.detail).toContain("Duplicate of an existing approved request.");
@@ -295,8 +295,15 @@ describe.skipIf(!hasDatabase)("HR leave override", () => {
     expect(row?.status).toBe("pending");
   });
 
-  it("keeps the over-balance guard for HR in E2-07", async () => {
-    const before = await balanceFor(kai.id, vacation.id);
+  it("approves an over-balance request, records the negative balance, and audits it distinctly", async () => {
+    // Pin a small balance so the 31-day request is deterministically over.
+    await getDb()`
+      update leave_balances
+      set balance = 2
+      where user_id = ${kai.id}
+        and leave_type_id = ${vacation.id}
+    `;
+
     const pending = await createPendingFor(
       kai.id,
       vacation,
@@ -305,15 +312,67 @@ describe.skipIf(!hasDatabase)("HR leave override", () => {
       "Override test — over balance.",
     );
 
+    const decision = await overrideLeaveRequest({
+      requestId: pending.request.id,
+      actorId: priya.id,
+      actorName: priya.name,
+      decision: "approved",
+      reason: "Payroll authorised the overdraw.",
+    });
+
+    expect(decision.request.status).toBe("approved");
+    expect(decision.balance?.previous).toBe(2);
+    expect(decision.balance?.next).toBe(-29);
+    await expect(balanceFor(kai.id, vacation.id)).resolves.toBe(-29);
+
+    const [row] = await getDb()<{ status: string }[]>`
+      select status::text as status
+      from leave_requests
+      where id = ${pending.request.id}
+    `;
+    expect(row?.status).toBe("approved");
+
+    const audits = await getDb()<{ action: string; detail: string | null }[]>`
+      select action, detail
+      from audit_log
+      where leave_request_id = ${pending.request.id}
+    `;
+
+    const approved = audits.filter((audit) => audit.action === "hr_override_approved");
+    expect(approved).toHaveLength(1);
+    expect(approved[0]?.detail).toMatch(/^HR override — approved by /);
+    expect(approved[0]?.detail).toContain("Over-balance approval");
+    expect(approved[0]?.detail).toContain("2 → -29");
+    expect(approved[0]?.detail).toContain("Payroll authorised the overdraw.");
+  });
+
+  it("rejects an override that would breach the overdrawn balance floor", async () => {
+    await getDb()`
+      update leave_balances
+      set balance = -10000
+      where user_id = ${kai.id}
+        and leave_type_id = ${vacation.id}
+    `;
+
+    const pending = await createPendingFor(
+      kai.id,
+      vacation,
+      "2032-09-01",
+      "2032-09-01",
+      "Override test — balance floor.",
+    );
+
     await expect(
       overrideLeaveRequest({
         requestId: pending.request.id,
         actorId: priya.id,
         actorName: priya.name,
         decision: "approved",
-        reason: "Would overdraw the balance.",
+        reason: "Would breach the overdrawn balance floor.",
       }),
     ).rejects.toMatchObject({ code: ERROR_CODES.CONFLICT });
+
+    await expect(balanceFor(kai.id, vacation.id)).resolves.toBe(-10000);
 
     const [row] = await getDb()<{ status: string }[]>`
       select status::text as status
@@ -321,7 +380,13 @@ describe.skipIf(!hasDatabase)("HR leave override", () => {
       where id = ${pending.request.id}
     `;
     expect(row?.status).toBe("pending");
-    await expect(balanceFor(kai.id, vacation.id)).resolves.toBe(before);
+
+    const audits = await getDb()<{ action: string }[]>`
+      select action
+      from audit_log
+      where leave_request_id = ${pending.request.id}
+    `;
+    expect(audits.filter((audit) => audit.action === "hr_override_approved")).toHaveLength(0);
   });
 
   it("keeps managers out of other teams and HR out of the manager endpoints", async () => {

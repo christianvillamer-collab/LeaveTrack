@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LogOut, Menu, X } from "lucide-react";
+import { Bell, LogOut, Menu, X } from "lucide-react";
 
 import { Brand, PreviewBadge } from "@/components/layout/brand";
 import { Avatar } from "@/components/ui/avatar";
@@ -18,9 +18,10 @@ export interface MobileNavProps {
   name: string;
   email: string;
   role: Role;
+  unreadNotifications: number;
 }
 
-export function MobileNav({ name, email, role }: MobileNavProps) {
+export function MobileNav({ name, email, role, unreadNotifications }: MobileNavProps) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -88,6 +89,25 @@ export function MobileNav({ name, email, role }: MobileNavProps) {
         <Brand variant="light" />
         <div className="flex items-center gap-2">
           <PreviewBadge className="xs:inline-flex hidden" />
+          <Link
+            href="/notifications"
+            aria-label={
+              unreadNotifications > 0
+                ? `Notifications, ${unreadNotifications} unread`
+                : "Notifications"
+            }
+            className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-primary inline-flex size-9 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:outline-none"
+          >
+            <span className="relative inline-flex">
+              <Bell aria-hidden="true" className="size-5" />
+              {unreadNotifications > 0 ? (
+                <span
+                  aria-hidden="true"
+                  className="bg-primary absolute -top-0.5 -right-0.5 size-2 rounded-full"
+                />
+              ) : null}
+            </span>
+          </Link>
           <Button
             type="button"
             variant="secondary"

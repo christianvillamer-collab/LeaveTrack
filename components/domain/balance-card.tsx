@@ -3,12 +3,14 @@ import { Infinity as InfinityIcon } from "lucide-react";
 import { LeaveTypeBadge } from "@/components/domain/leave-type-badge";
 import { Card } from "@/components/ui/card";
 import type { LeaveBalance } from "@/lib/types";
+import { cn } from "@/lib/utils/cn";
 import { formatDate, formatDays } from "@/lib/utils/format";
 
 export function BalanceCard({ balance }: { balance: LeaveBalance }) {
   const tracked = balance.confirmed !== null;
   const total = balance.confirmed ?? 0;
-  const percent = tracked ? Math.min(100, Math.round((total / 20) * 100)) : 0;
+  const overdrawn = tracked && total < 0;
+  const percent = tracked ? Math.max(0, Math.min(100, Math.round((total / 20) * 100))) : 0;
 
   return (
     <Card className="flex flex-col gap-4 p-5">
@@ -25,11 +27,23 @@ export function BalanceCard({ balance }: { balance: LeaveBalance }) {
         <p className="text-caption text-muted-foreground">
           {tracked ? "Available balance" : "Balance limit"}
         </p>
-        <p className="text-h1 text-foreground mt-1 flex items-baseline gap-2 tabular-nums">
+        <p
+          className={cn(
+            "text-h1 mt-1 flex items-baseline gap-2 tabular-nums",
+            overdrawn ? "text-danger-foreground" : "text-foreground",
+          )}
+        >
           {tracked ? (
             <>
               {total.toLocaleString("en-GB", { maximumFractionDigits: 2 })}
-              <span className="text-small text-muted-foreground font-normal">days</span>
+              <span
+                className={cn(
+                  "text-small font-normal",
+                  overdrawn ? "text-danger-foreground" : "text-muted-foreground",
+                )}
+              >
+                days{overdrawn ? " overdrawn" : ""}
+              </span>
             </>
           ) : (
             <>
@@ -45,12 +59,16 @@ export function BalanceCard({ balance }: { balance: LeaveBalance }) {
       {tracked ? (
         <div
           role="img"
-          aria-label={`${balance.leaveType.name}: ${formatDays(total)} available out of a 20 day reference`}
+          aria-label={
+            overdrawn
+              ? `${balance.leaveType.name}: ${formatDays(Math.abs(total))} overdrawn`
+              : `${balance.leaveType.name}: ${formatDays(total)} available out of a 20 day reference`
+          }
           className="bg-muted h-2 w-full overflow-hidden rounded-full"
         >
           <div
             aria-hidden="true"
-            className="bg-primary h-full rounded-full"
+            className={cn("h-full rounded-full", overdrawn ? "bg-danger" : "bg-primary")}
             style={{ width: `${percent}%` }}
           />
         </div>

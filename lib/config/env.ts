@@ -16,6 +16,11 @@ const serverEnvSchema = z.object({
   DATABASE_URL: optionalNonEmpty,
   DIRECT_URL: optionalNonEmpty,
   CRON_SECRET: optionalNonEmpty,
+  // Notification delivery is server-only. `log` keeps dev/demo working with an
+  // empty environment; `resend` needs both credential values at send time.
+  EMAIL_TRANSPORT: z.enum(["log", "resend"]).default("log"),
+  EMAIL_API_KEY: optionalNonEmpty,
+  EMAIL_FROM: optionalNonEmpty,
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;

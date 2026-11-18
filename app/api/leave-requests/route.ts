@@ -2,8 +2,12 @@ import { AppError } from "@/lib/api/errors";
 import { withApiHandler } from "@/lib/api/handler";
 import { canViewTeam } from "@/lib/auth/policy";
 import { getSession } from "@/lib/auth/session";
-import { createLeaveRequest, getMyLeaveData, getTeamLeaveData } from "@/lib/db/leave";
-import { leaveRequestInputSchema, leaveRequestScopeSchema } from "@/lib/validation/leave";
+import {
+  createLeaveRequest,
+  listMyLeaveRequestsPage,
+  listTeamLeaveRequestsPage,
+} from "@/lib/db/leave";
+import { leaveRequestInputSchema, leaveRequestListQuerySchema } from "@/lib/validation/leave";
 
 export const runtime = "nodejs";
 
@@ -14,19 +18,24 @@ export const GET = withApiHandler("GET /api/leave-requests", async (request) => 
     throw AppError.unauthenticated();
   }
 
-  const scope = leaveRequestScopeSchema.parse(
-    request.nextUrl.searchParams.get("scope") ?? undefined,
-  );
+  const param = (name: string) => request.nextUrl.searchParams.get(name) ?? undefined;
+  const query = leaveRequestListQuerySchema.parse({
+    scope: param("scope"),
+    status: param("status"),
+    page: param("page"),
+    pageSize: param("pageSize"),
+  });
+  const options = { status: query.status, page: query.page, pageSize: query.pageSize };
 
-  if (scope === "team") {
+  if (query.scope === "team") {
     if (!canViewTeam({ id: session.id, role: session.role })) {
       throw AppError.forbidden("Manager access is required for scope=team.");
     }
 
-    return getTeamLeaveData(session.id);
+    return listTeamLeaveRequestsPage(session.id, options);
   }
 
-  return getMyLeaveData(session.id);
+  return listMyLeaveRequestsPage(session.id, options);
 });
 
 export const POST = withApiHandler(
@@ -39,7 +48,6 @@ export const POST = withApiHandler(
     }
 
     let body: unknown;
-
     try {
       body = await request.json();
     } catch {

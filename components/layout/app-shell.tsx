@@ -4,12 +4,28 @@ import { MobileNav } from "./mobile-nav";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
 
-export function AppShell({ session, children }: { session: Session; children: React.ReactNode }) {
+export interface AppShellProps {
+  session: Session;
+  unreadNotifications: number;
+  children: React.ReactNode;
+}
+
+export function AppShell({ session, unreadNotifications, children }: AppShellProps) {
   return (
     <div className="min-h-dvh lg:grid lg:grid-cols-[16.5rem_minmax(0,1fr)]">
-      <Sidebar name={session.name} email={session.email} role={session.role} />
+      <Sidebar
+        name={session.name}
+        email={session.email}
+        role={session.role}
+        unreadNotifications={unreadNotifications}
+      />
       <div className="flex min-h-dvh min-w-0 flex-col">
-        <MobileNav name={session.name} email={session.email} role={session.role} />
+        <MobileNav
+          name={session.name}
+          email={session.email}
+          role={session.role}
+          unreadNotifications={unreadNotifications}
+        />
         <TopBar name={session.name} role={session.role} />
         <main
           id="main-content"

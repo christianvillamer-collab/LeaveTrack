@@ -6,8 +6,10 @@ import { StatCard } from "@/components/domain/stat-card";
 import { TeamRequestTable } from "@/components/domain/team-request-table";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
+import { Select } from "@/components/ui/select";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import {
   canManageRequests,
@@ -16,35 +18,73 @@ import {
   canViewTeam,
 } from "@/lib/auth/policy";
 import { requirePolicy } from "@/lib/auth/session";
-import { getTeamLeaveData, listOrgLeaveRequests } from "@/lib/db/leave";
-import type { TeamLeaveData, TeamLeaveRequest } from "@/lib/types";
+import { listOrgLeaveRequestsPage, listTeamLeaveRequestsPage } from "@/lib/db/leave";
+import { listDirectReports } from "@/lib/db/users";
+import type { PaginationMeta, TeamLeaveRequest, TeamMember } from "@/lib/types";
+import {
+  DEFAULT_PAGE_SIZE,
+  listQuerySchema,
+  toPaginationMeta,
+  type SearchParamValue,
+} from "@/lib/validation/list";
 
 export const metadata = { title: "Approvals" };
 
-export default async function ApprovalsPage() {
+export default async function ApprovalsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    status?: SearchParamValue;
+    page?: SearchParamValue;
+    pageSize?: SearchParamValue;
+  }>;
+}) {
   const session = await requirePolicy(canManageRequests);
   const isManager = canViewTeam(session);
   const isHr = canOverrideRequests(session);
+  const params = await searchParams;
+  const rawStatus = typeof params.status === "string" ? params.status : "";
+
+  const parsed = listQuerySchema.safeParse(params);
+  const query = parsed.success ? parsed.data : null;
+  const validationMessage = parsed.success
+    ? null
+    : (parsed.error.issues[0]?.message ?? "Enter valid list filters.");
 
   let databaseUnavailable = false;
-  let managerData: TeamLeaveData = { requests: [], directReports: [] };
-  let orgRequests: TeamLeaveRequest[] = [];
+  let result: { items: TeamLeaveRequest[]; pagination: PaginationMeta } | null = null;
+  let reports: TeamMember[] = [];
 
-  try {
-    if (isManager) {
-      managerData = await getTeamLeaveData(session.id);
-    } else if (isHr) {
-      orgRequests = await listOrgLeaveRequests();
-    }
-  } catch (error) {
-    if (error instanceof AppError && error.code === ERROR_CODES.DATABASE_NOT_CONFIGURED) {
-      databaseUnavailable = true;
-    } else {
-      throw error;
+  if (query) {
+    try {
+      if (isManager) {
+        [result, reports] = await Promise.all([
+          listTeamLeaveRequestsPage(session.id, {
+            status: query.status,
+            page: query.page,
+            pageSize: query.pageSize,
+          }),
+          listDirectReports(session.id),
+        ]);
+      } else if (isHr) {
+        result = await listOrgLeaveRequestsPage({
+          status: query.status,
+          page: query.page,
+          pageSize: query.pageSize,
+        });
+      }
+    } catch (error) {
+      if (error instanceof AppError && error.code === ERROR_CODES.DATABASE_NOT_CONFIGURED) {
+        databaseUnavailable = true;
+      } else {
+        throw error;
+      }
     }
   }
 
-  const requests = isManager ? managerData.requests : orgRequests;
+  const requests = result?.items ?? [];
+  const pagination =
+    result?.pagination ?? toPaginationMeta(0, query?.page ?? 1, query?.pageSize ?? 25);
   const pending = requests.filter((request) => request.status === "pending");
   const decided = requests.filter((request) => request.status !== "pending");
   // The queue and `/requests/[id]` must agree: HR can never act on their own
@@ -56,7 +96,6 @@ export default async function ApprovalsPage() {
           { ownerId: request.employee.id, ownerManagerId: null, status: request.status },
         )
       : true;
-  const reports = managerData.directReports;
   const employeesWithRequests = new Set(requests.map((request) => request.employee.id)).size;
   const oldestWaiting =
     pending.length === 0
@@ -66,6 +105,17 @@ export default async function ApprovalsPage() {
             differenceInCalendarDays(new Date(), parseISO(request.createdAt)),
           ),
         );
+
+  function pageHref(page: number): string {
+    const next = new URLSearchParams();
+    if (query?.status) next.set("status", query.status);
+    if (page !== 1) next.set("page", String(page));
+    if (query && query.pageSize !== DEFAULT_PAGE_SIZE) {
+      next.set("pageSize", String(query.pageSize));
+    }
+    const suffix = next.toString();
+    return suffix ? `/approvals?${suffix}` : "/approvals";
+  }
 
   return (
     <div className="space-y-6">
@@ -86,6 +136,10 @@ export default async function ApprovalsPage() {
             whose database manager is the current user.
           </p>
         </Alert>
+      ) : validationMessage ? (
+        <Alert variant="danger" title="Invalid list filters">
+          {validationMessage} Correct the filters and run the queue again. No results were loaded.
+        </Alert>
       ) : databaseUnavailable ? (
         <Alert variant="warning" title="Database not configured">
           <div className="space-y-2">
@@ -99,34 +153,64 @@ export default async function ApprovalsPage() {
         </Alert>
       ) : (
         <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Filter queue</CardTitle>
+              <CardDescription>Status filtering and paging run in Postgres.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form method="get" className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="space-y-1.5 sm:max-w-xs sm:flex-1">
+                  <label htmlFor="approval-status" className="text-caption text-muted-foreground">
+                    Status
+                  </label>
+                  <Select
+                    id="approval-status"
+                    name="status"
+                    defaultValue={rawStatus}
+                    key={rawStatus}
+                  >
+                    <option value="">All statuses</option>
+                    <option value="pending">Pending</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                  </Select>
+                </div>
+                <Button type="submit" size="sm">
+                  Apply filter
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+
           <section
-            aria-label="Approval queue summary"
+            aria-label="Approval queue summary for this page"
             className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
           >
             <StatCard
-              label="Pending requests"
+              label="Pending on page"
               value={String(pending.length)}
-              hint={isHr ? "Across all teams" : "Direct reports only"}
+              hint="From the current filtered page"
               icon={Inbox}
               tone="warning"
             />
             <StatCard
               label="Oldest waiting"
               value={pending.length === 0 ? "—" : `${oldestWaiting}d`}
-              hint="Calendar days since submission"
+              hint="Calendar days since submission (this page)"
               icon={Timer}
               tone={oldestWaiting > 3 ? "danger" : "info"}
             />
             <StatCard
-              label={isHr ? "Employees with requests" : "Direct reports"}
+              label={isHr ? "Employees on page" : "Direct reports"}
               value={String(isHr ? employeesWithRequests : reports.length)}
-              hint={isHr ? "Org-wide query" : "Manager-filtered query"}
+              hint={isHr ? "From the current filtered page" : "Manager-filtered query"}
               icon={Users}
             />
             <StatCard
-              label="Recently decided"
+              label="Decided on page"
               value={String(decided.length)}
-              hint="Approved and rejected"
+              hint="Approved and rejected on this page"
               icon={ShieldCheck}
               tone="success"
             />
@@ -145,7 +229,7 @@ export default async function ApprovalsPage() {
             <section aria-label="Pending approvals" className="space-y-4">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-h3 text-foreground">Awaiting a decision</h2>
-                <Badge variant="warning">{pending.length} pending</Badge>
+                <Badge variant="warning">{pending.length} pending on page</Badge>
               </div>
 
               <TeamRequestTable
@@ -160,6 +244,8 @@ export default async function ApprovalsPage() {
                 override={isHr}
                 canActOn={canActOn}
                 variant="cards"
+                pagination={pending.length > 0 || decided.length === 0 ? pagination : undefined}
+                pageHref={pending.length > 0 || decided.length === 0 ? pageHref : undefined}
               />
             </section>
 
@@ -245,13 +331,15 @@ export default async function ApprovalsPage() {
                 requests={decided}
                 emptyTitle="No decisions yet"
                 emptyDescription="Decisions will appear here once they are recorded."
+                pagination={pending.length === 0 && decided.length > 0 ? pagination : undefined}
+                pageHref={pending.length === 0 && decided.length > 0 ? pageHref : undefined}
               />
             </CardContent>
           </Card>
 
           <p className="text-caption text-muted-foreground">
             {isHr
-              ? `Scope: ${employeesWithRequests} employees with requests. Manager queues keep the SQL manager_id predicate.`
+              ? `Scope: ${employeesWithRequests} employees with requests on this page. Manager queues keep the SQL manager_id predicate.`
               : `Scope: ${reports.length} direct reports. Other teams are excluded by the SQL manager_id predicate.`}
           </p>
         </>

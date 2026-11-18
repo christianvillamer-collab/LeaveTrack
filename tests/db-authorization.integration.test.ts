@@ -17,6 +17,7 @@ const TABLES = [
   "accrual_ledger",
   "policy_audit_log",
   "user_audit_log",
+  "notifications",
 ] as const;
 
 type Table = (typeof TABLES)[number];
@@ -33,6 +34,7 @@ const EXPECTED: Record<Table, Record<Privilege, boolean>> = {
   accrual_ledger: { SELECT: true, INSERT: true, UPDATE: false, DELETE: false },
   policy_audit_log: { SELECT: true, INSERT: true, UPDATE: false, DELETE: false },
   user_audit_log: { SELECT: true, INSERT: true, UPDATE: false, DELETE: false },
+  notifications: { SELECT: true, INSERT: true, UPDATE: true, DELETE: false },
 };
 
 const CLIENT_ROLES = ["anon", "authenticated"] as const;
@@ -322,6 +324,36 @@ describe.skipIf(!hasDatabase)("database authorization", () => {
     } finally {
       await sql.unsafe(`drop table if exists public.${probe}`);
     }
+  });
+
+  it("accepts the E2-11 audit actions and the negative-balance range", async () => {
+    const [constraint] = await sql<{ expression: string }[]>`
+      select pg_get_constraintdef(oid) as expression
+      from pg_constraint
+      where conname = 'audit_log_action_check'
+    `;
+    for (const action of ["hr_override_approved", "hr_override_rejected"]) {
+      expect(constraint.expression, `audit action ${action}`).toContain(action);
+    }
+
+    const [balanceCheck] = await sql<{ expression: string }[]>`
+      select pg_get_constraintdef(oid) as expression
+      from pg_constraint
+      where conname = 'leave_balances_balance_check'
+    `;
+    expect(balanceCheck.expression).toContain("-10000");
+  });
+
+  it("keeps audit_log append-only under E2-11", async () => {
+    const triggers = await sql<{ tgname: string }[]>`
+      select tgname
+      from pg_trigger
+      where not tgisinternal
+        and tgrelid = 'audit_log'::regclass
+    `;
+    const names = triggers.map((trigger) => trigger.tgname);
+    expect(names).toContain("audit_log_no_update");
+    expect(names).toContain("audit_log_no_hard_delete");
   });
 
   it("lets leavetrack_app read users and update balances", async (ctx) => {

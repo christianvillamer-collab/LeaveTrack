@@ -9,7 +9,18 @@ const config = {
   submitted: { icon: MessageSquare, tone: "bg-muted text-muted-foreground" },
   approved: { icon: CheckCircle2, tone: "bg-success-subtle text-success-foreground" },
   rejected: { icon: XCircle, tone: "bg-danger-subtle text-danger-foreground" },
+  hr_override_approved: {
+    icon: CheckCircle2,
+    tone: "bg-success-subtle text-success-foreground",
+  },
+  hr_override_rejected: { icon: XCircle, tone: "bg-danger-subtle text-danger-foreground" },
 } as const;
+
+function actionLabel(action: AuditEvent["action"]): string {
+  if (action === "hr_override_approved") return "HR override approved";
+  if (action === "hr_override_rejected") return "HR override rejected";
+  return action;
+}
 
 export function AuditTrail({ events }: { events: AuditEvent[] }) {
   if (events.length === 0) {
@@ -36,15 +47,15 @@ export function AuditTrail({ events }: { events: AuditEvent[] }) {
               <div className="flex flex-wrap items-center gap-2">
                 <Badge
                   variant={
-                    event.action === "approved"
+                    event.action === "approved" || event.action === "hr_override_approved"
                       ? "success"
-                      : event.action === "rejected"
+                      : event.action === "rejected" || event.action === "hr_override_rejected"
                         ? "danger"
                         : "neutral"
                   }
                   className="capitalize"
                 >
-                  {event.action}
+                  {actionLabel(event.action)}
                 </Badge>
                 <span className="text-caption text-muted-foreground">
                   {formatDateTime(event.occurredAt)}
