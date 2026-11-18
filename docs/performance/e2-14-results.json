@@ -1,0 +1,204 @@
+{
+  "generatedAt": "2026-11-18T03:16:51.754Z",
+  "task": "E2-14",
+  "dataset": {
+    "employees": 800,
+    "managers": 8,
+    "hrAdmins": 1,
+    "requestsSeeded": 20000,
+    "virtualUsers": 800
+  },
+  "config": {
+    "durationSeconds": 60,
+    "rampSeconds": 10,
+    "thinkMs": 500,
+    "requestTimeoutMs": 15000,
+    "p95LimitMs": 500,
+    "authPoolSize": 32
+  },
+  "iterations": 7275,
+  "timings": {
+    "myList": {
+      "samples": 1873,
+      "minMs": 198.04,
+      "p50Ms": 13158.742,
+      "p95Ms": 15001.51,
+      "p99Ms": 15002.036,
+      "maxMs": 15011.565
+    },
+    "teamList": {
+      "samples": 58,
+      "minMs": 164.246,
+      "p50Ms": 6642.571,
+      "p95Ms": 15001.138,
+      "p99Ms": 15001.569,
+      "maxMs": 15001.569
+    },
+    "balance": {
+      "samples": 2200,
+      "minMs": 410.691,
+      "p50Ms": 3549.607,
+      "p95Ms": 15001.009,
+      "p99Ms": 15001.981,
+      "maxMs": 15028.059
+    },
+    "requestsPage": {
+      "samples": 2141,
+      "minMs": 447.211,
+      "p50Ms": 4781.885,
+      "p95Ms": 15001.01,
+      "p99Ms": 15001.761,
+      "maxMs": 15007.454
+    },
+    "audit": {
+      "samples": 9,
+      "minMs": 420.129,
+      "p50Ms": 6759.436,
+      "p95Ms": 15001.188,
+      "p99Ms": 15001.188,
+      "maxMs": 15001.188
+    },
+    "submit": {
+      "samples": 994,
+      "minMs": 147.24,
+      "p50Ms": 8028.388,
+      "p95Ms": 15001.304,
+      "p99Ms": 15001.805,
+      "maxMs": 15008.753
+    }
+  },
+  "responses": {
+    "myList": {
+      "success": 787,
+      "failure": 1086
+    },
+    "teamList": {
+      "success": 37,
+      "failure": 21
+    },
+    "balance": {
+      "success": 1686,
+      "failure": 514
+    },
+    "requestsPage": {
+      "success": 1600,
+      "failure": 541
+    },
+    "audit": {
+      "success": 5,
+      "failure": 4
+    },
+    "submit": {
+      "success": 602,
+      "failure": 392
+    }
+  },
+  "errors": [
+    {
+      "endpoint": "myList",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "submit",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "submit",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "submit",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "teamList",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "submit",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "myList",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "submit",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "submit",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "submit",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "myList",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "submit",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "audit",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "submit",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "myList",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "myList",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "submit",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "submit",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "myList",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    },
+    {
+      "endpoint": "submit",
+      "status": 0,
+      "message": "The operation was aborted due to timeout"
+    }
+  ],
+  "thresholds": {
+    "p95Failures": ["myList", "teamList", "balance", "requestsPage", "audit"],
+    "totalFailures": 2558,
+    "passed": false
+  },
+  "result": "fail"
+}

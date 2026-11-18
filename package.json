@@ -26,6 +26,8 @@
     "db:seed": "node scripts/seed.mjs",
     "auth:seed": "node scripts/seed-auth.mjs",
     "bench:lists": "node scripts/bench-list-endpoints.mjs",
+    "load:800": "node scripts/load-test-800.mjs",
+    "load:800:seed": "node scripts/load-test-800.mjs --seed-only",
     "prepare": "husky"
   },
   "dependencies": {
