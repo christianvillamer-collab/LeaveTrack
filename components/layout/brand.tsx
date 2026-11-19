@@ -7,13 +7,16 @@ import { cn } from "@/lib/utils/cn";
 export function Brand({
   variant = "dark",
   compact = false,
+  prefetch,
 }: {
   variant?: "dark" | "light";
   compact?: boolean;
+  prefetch?: boolean;
 }) {
   return (
     <Link
       href="/dashboard"
+      prefetch={prefetch}
       className={cn(
         "focus-visible:ring-ring flex items-center gap-3 rounded-md focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none",
         variant === "dark" ? "text-sidebar-foreground" : "text-foreground",

@@ -47,13 +47,12 @@ export function countLeaveDays(startDate: string, endDate: string): number {
 }
 
 /**
- * Stable display reference for a leave request. `leave_requests` has no
- * reference column, so audit surfaces derive one from the UUID instead of
- * inventing a schema field. The trailing hex is used because seeded UUIDs share
- * a leading segment (`b0000000-…`), which would make references collide.
+ * Display reference stored on `leave_requests`. The database generates the
+ * value (existing rows were backfilled with their former UUID-derived value),
+ * so this is a pass-through: identity is never inferred from the request UUID.
  */
-export function formatRequestReference(id: string): string {
-  return `LR-${id.replace(/-/g, "").slice(-8).toUpperCase()}`;
+export function formatRequestReference(reference: string): string {
+  return reference;
 }
 
 export function formatDays(value: number): string {

@@ -1,21 +1,60 @@
 "use client";
 
-import { useActionState } from "react";
+import { useState, type FormEvent } from "react";
 import { ArrowRight, LockKeyhole, Mail } from "lucide-react";
 
-import { signIn, type LoginState } from "@/app/(auth)/login/actions";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 
-const initialState: LoginState = { error: null };
+const UNAVAILABLE_ERROR = "We could not complete sign-in. Try again in a moment.";
 
 export function LoginForm({ next, configured }: { next?: string; configured: boolean }) {
-  const [state, formAction, pending] = useActionState(signIn, initialState);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!configured || pending) {
+      return;
+    }
+
+    setError(null);
+    setPending(true);
+
+    try {
+      const form = new FormData(event.currentTarget);
+      const response = await fetch("/auth/login", {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: form.get("email"),
+          password: form.get("password"),
+          next: form.get("next") ?? undefined,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string;
+        redirectTo?: string;
+      } | null;
+
+      if (!response.ok || !payload?.redirectTo) {
+        setError(payload?.error ?? UNAVAILABLE_ERROR);
+        return;
+      }
+
+      window.location.assign(payload.redirectTo);
+    } catch {
+      setError(UNAVAILABLE_ERROR);
+    } finally {
+      setPending(false);
+    }
+  }
 
   return (
-    <form action={formAction} className="space-y-5" noValidate>
+    <form action="/auth/login" method="post" onSubmit={onSubmit} className="space-y-5" noValidate>
       {next ? <input type="hidden" name="next" value={next} /> : null}
 
       {!configured ? (
@@ -70,7 +109,7 @@ export function LoginForm({ next, configured }: { next?: string; configured: boo
         )}
       </Field>
 
-      {state.error ? <Alert variant="danger">{state.error}</Alert> : null}
+      {error ? <Alert variant="danger">{error}</Alert> : null}
 
       <Button
         type="submit"
@@ -78,7 +117,7 @@ export function LoginForm({ next, configured }: { next?: string; configured: boo
         className="w-full"
         loading={pending}
         loadingText="Signing in…"
-        disabled={!configured}
+        disabled={!configured || pending}
       >
         Sign in
         <ArrowRight aria-hidden="true" />

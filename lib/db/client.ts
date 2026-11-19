@@ -28,7 +28,10 @@ export function getDb(): Sql {
   const isLocal = /(?:localhost|127\.0\.0\.1)/.test(connectionString);
 
   client ??= postgres(connectionString, {
-    max: 10,
+    // One connection per serverless instance. A larger per-instance pool can
+    // exhaust the Supabase transaction pooler during a first-load prefetch
+    // burst, leaving dashboard queries queued until the platform timeout.
+    max: 1,
     idle_timeout: 20,
     connect_timeout: 10,
     // Supabase's transaction pooler does not support prepared statements.

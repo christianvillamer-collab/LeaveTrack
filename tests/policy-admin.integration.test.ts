@@ -141,33 +141,24 @@ describe.skipIf(!hasDatabase)("HR policy administration", () => {
       on conflict (user_id, leave_type_id, period) do nothing
     `;
 
-    try {
-      await expect(
-        upsertPolicyRate({
-          actorId: PRIYA_ID,
-          userId: MAYA_ID,
-          leaveTypeId: VACATION_ID,
-          accrualPerMonth: 4,
-          effectiveFrom: accruedMonth,
-        }),
-      ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      upsertPolicyRate({
+        actorId: PRIYA_ID,
+        userId: MAYA_ID,
+        leaveTypeId: VACATION_ID,
+        accrualPerMonth: 4,
+        effectiveFrom: accruedMonth,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
 
-      const [row] = await getDb()<{ count: string }[]>`
-        select count(*)::text as count
-        from leave_policies
-        where user_id = ${MAYA_ID}
-          and leave_type_id = ${VACATION_ID}
-          and effective_from = ${accruedMonth}::date
-      `;
-      expect(row?.count).toBe("0");
-    } finally {
-      await getDb()`
-        delete from accrual_ledger
-        where user_id = ${MAYA_ID}
-          and leave_type_id = ${VACATION_ID}
-          and period = ${accruedMonth}::date
-      `;
-    }
+    const [row] = await getDb()<{ count: string }[]>`
+      select count(*)::text as count
+      from leave_policies
+      where user_id = ${MAYA_ID}
+        and leave_type_id = ${VACATION_ID}
+        and effective_from = ${accruedMonth}::date
+    `;
+    expect(row?.count).toBe("0");
   });
 
   it("rejects an untracked leave type", async () => {

@@ -47,8 +47,9 @@ function requireAuthCredentials() {
  *
  * In a Server Component `cookieStore.set` throws; the auth cookies are refreshed
  * by `proxy.ts` on every matched request instead. Server Actions and Route
- * Handlers can write cookies, so sign-in, sign-out, and the OAuth callback work
- * here.
+ * Handlers can write cookies, so sign-out and the OAuth callback work here.
+ * Password sign-in uses `createSupabaseRouteClient` so its cookies land on the
+ * Response without forcing a page re-render.
  */
 export async function createSupabaseServerClient() {
   const { url, anonKey } = requireAuthCredentials();
@@ -70,6 +71,55 @@ export async function createSupabaseServerClient() {
       },
     },
   });
+}
+
+/**
+ * Client for public auth Route Handlers. Cookie writes are collected and must
+ * be applied to the final response explicitly. A Route Handler that mutates
+ * cookies through `cookies()` would still be safe from Next's page re-render,
+ * but keeping the writes on the Response makes that boundary visible: no
+ * Server Component or page-hosted action can inherit them.
+ */
+export function createSupabaseRouteClient(request: NextRequest) {
+  const { url, anonKey } = requireAuthCredentials();
+  const applyCookies: Array<(response: NextResponse) => void> = [];
+  const pendingHeaders = new Headers();
+
+  const supabase = createServerClient(url, anonKey, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet, headers) {
+        for (const { name, value } of cookiesToSet) {
+          request.cookies.set(name, value);
+        }
+
+        for (const { name, value, options } of cookiesToSet) {
+          applyCookies.push((response) => response.cookies.set(name, value, options));
+        }
+
+        for (const [name, value] of Object.entries(headers)) {
+          pendingHeaders.set(name, value);
+        }
+      },
+    },
+  });
+
+  return {
+    supabase,
+    applyTo<T extends NextResponse>(response: T): T {
+      for (const apply of applyCookies) {
+        apply(response);
+      }
+
+      for (const [name, value] of pendingHeaders) {
+        response.headers.set(name, value);
+      }
+
+      return response;
+    },
+  };
 }
 
 /**

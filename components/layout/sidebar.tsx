@@ -27,7 +27,7 @@ export function Sidebar({ name, email, role, unreadNotifications }: SidebarProps
   return (
     <aside className="border-sidebar-border bg-sidebar sticky top-0 hidden h-dvh w-[16.5rem] flex-col border-r lg:flex">
       <div className="flex h-16 items-center px-5">
-        <Brand />
+        <Brand prefetch={false} />
       </div>
 
       <nav aria-label="Primary" className="flex-1 space-y-6 overflow-y-auto px-3 py-4">
@@ -45,6 +45,7 @@ export function Sidebar({ name, email, role, unreadNotifications }: SidebarProps
                   <li key={item.href}>
                     <Link
                       href={item.href}
+                      prefetch={false}
                       aria-current={active ? "page" : undefined}
                       className={cn(
                         "text-small focus-visible:ring-primary-foreground flex items-center gap-3 rounded-md px-3 py-2.5 font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none",

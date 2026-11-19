@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const captured = vi.hoisted(() => ({
   options: null as unknown,
@@ -12,7 +12,7 @@ vi.mock("@supabase/ssr", () => ({
   },
 }));
 
-import { createSupabaseProxyClient } from "@/lib/auth/supabase";
+import { createSupabaseProxyClient, createSupabaseRouteClient } from "@/lib/auth/supabase";
 
 interface CookieSet {
   name: string;
@@ -65,5 +65,25 @@ describe("createSupabaseProxyClient", () => {
     expect(result.headers.get("x-supabase-test")).toBe("1");
     expect(result.cookies.get("sb-project-auth-token")?.value).toBe("rotated");
     expect(request.cookies.get("sb-project-auth-token")?.value).toBe("rotated");
+  });
+});
+
+describe("createSupabaseRouteClient", () => {
+  it("applies auth cookies and headers only to the final response", () => {
+    const request = new NextRequest("http://localhost:3000/auth/login");
+    const { applyTo } = createSupabaseRouteClient(request);
+    const options = captured.options as ServerClientOptions;
+
+    options.cookies.setAll(
+      [{ name: "sb-project-auth-token", value: "session", options: { path: "/" } }],
+      { "Cache-Control": "no-store", "X-Supabase-Test": "1" },
+    );
+
+    const response = applyTo(NextResponse.json({ ok: true }));
+
+    expect(response.cookies.get("sb-project-auth-token")?.value).toBe("session");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("x-supabase-test")).toBe("1");
+    expect(request.cookies.get("sb-project-auth-token")?.value).toBe("session");
   });
 });

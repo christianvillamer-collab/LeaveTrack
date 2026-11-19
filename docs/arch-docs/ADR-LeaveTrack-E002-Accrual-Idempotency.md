@@ -27,6 +27,6 @@ US-07 requires a monthly accrual run that increases every tracked balance by the
 
 - **Positive:** idempotency is a database invariant, not application logic. Concurrent or repeated runs cannot double-credit. A user or policy added mid-month accrues on the next run because its pair has no ledger row yet.
 - **Positive:** `lastAccruedAt` is derived from `accrual_ledger.created_at`, so approval and restore writes no longer pollute the "last accrual" timestamp.
-- **Negative:** `accrual_ledger` has no delete-protection trigger yet. There is no delete path, but a manual purge followed by a rerun would double-accrue; E2-17 adds an append-only guard.
-- **Negative:** the ledger is a permanent compliance artifact; a future migration must not backfill or rewrite it without an explicit reconciliation.
+- **Positive (E2-17):** a `BEFORE DELETE OR UPDATE` trigger makes the ledger append-only, so a manual purge followed by a rerun can no longer double-accrue. The trigger function's `EXECUTE` is revoked from `PUBLIC`/`anon`/`authenticated`; only DDL owners can disable it deliberately.
+- **Negative:** the ledger is a permanent compliance artifact. Correcting a bad run requires an explicit compensating entry with its own audit trail, never a DELETE/UPDATE or an unannounced migration.
 - **Operational:** Vercel Hobby only permits daily cron schedules. The monthly expression `0 6 1 * *` needs Pro; daily runs are safe because the ledger makes them no-ops.

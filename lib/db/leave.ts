@@ -64,6 +64,7 @@ interface InsertedRequestRow {
 interface MyLeaveRequestRow {
   total: number;
   id: string;
+  reference: string;
   start_date: string;
   end_date: string;
   days: number;
@@ -89,6 +90,7 @@ interface ScopedRequestRow extends MyLeaveRequestRow {
 
 interface RequestDetailRow {
   id: string;
+  reference: string;
   start_date: string;
   end_date: string;
   days: number;
@@ -306,7 +308,7 @@ export async function getBalancesForUser(userId: string): Promise<LeaveBalance[]
 function toMyLeaveRequest(row: MyLeaveRequestRow): MyLeaveRequest {
   return {
     id: row.id,
-    reference: formatRequestReference(row.id),
+    reference: formatRequestReference(row.reference),
     leaveType: toLeaveType({
       id: row.leave_type_id,
       name: row.leave_type_name,
@@ -332,6 +334,7 @@ async function queryMyLeaveRequests(
     select
       count(*) over ()::int as total,
       r.id,
+      r.reference,
       r.start_date::text as start_date,
       r.end_date::text as end_date,
       (r.end_date - r.start_date + 1)::int as days,
@@ -415,7 +418,7 @@ function scopedRequestFilter(db: Db, actor: ScopedActor, status: RequestStatus |
 function toRequestSummary(row: ScopedRequestRow): RequestSummary {
   return {
     id: row.id,
-    reference: formatRequestReference(row.id),
+    reference: formatRequestReference(row.reference),
     employee: {
       id: row.employee_id,
       name: row.employee_name,
@@ -446,6 +449,7 @@ async function queryScopedLeaveRequests(
     select
       count(*) over ()::int as total,
       r.id,
+      r.reference,
       r.start_date::text as start_date,
       r.end_date::text as end_date,
       (r.end_date - r.start_date + 1)::int as days,
@@ -504,6 +508,7 @@ export async function getLeaveRequestDetail(requestId: string): Promise<LeaveReq
   const rows = await getDb()<RequestDetailRow[]>`
     select
       r.id,
+      r.reference,
       r.start_date::text as start_date,
       r.end_date::text as end_date,
       (r.end_date - r.start_date + 1)::int as days,
@@ -541,7 +546,7 @@ export async function getLeaveRequestDetail(requestId: string): Promise<LeaveReq
 
   return {
     id: row.id,
-    reference: formatRequestReference(row.id),
+    reference: formatRequestReference(row.reference),
     employee: {
       id: row.employee_id,
       name: row.employee_name,
@@ -572,7 +577,7 @@ export async function getLeaveRequestDetail(requestId: string): Promise<LeaveReq
 function toTeamLeaveRequest(row: TeamLeaveRequestRow): TeamLeaveRequest {
   return {
     id: row.id,
-    reference: formatRequestReference(row.id),
+    reference: formatRequestReference(row.reference),
     employee: {
       id: row.employee_id,
       name: row.employee_name,
@@ -608,6 +613,7 @@ async function queryTeamLeaveRequests(
     select
       count(*) over ()::int as total,
       r.id,
+      r.reference,
       r.start_date::text as start_date,
       r.end_date::text as end_date,
       (r.end_date - r.start_date + 1)::int as days,
@@ -678,6 +684,7 @@ async function queryOrgLeaveRequests(
     select
       count(*) over ()::int as total,
       r.id,
+      r.reference,
       r.start_date::text as start_date,
       r.end_date::text as end_date,
       (r.end_date - r.start_date + 1)::int as days,

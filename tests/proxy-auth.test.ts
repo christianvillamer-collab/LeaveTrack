@@ -67,6 +67,7 @@ describe("proxy authentication gate", () => {
 
     await expect(proxy(request("/api/health"))).resolves.toMatchObject({ status: 200 });
     await expect(proxy(request("/login"))).resolves.toMatchObject({ status: 200 });
+    await expect(proxy(request("/auth/login"))).resolves.toMatchObject({ status: 200 });
     await expect(proxy(request("/auth/callback?code=abc"))).resolves.toMatchObject({
       status: 200,
     });
