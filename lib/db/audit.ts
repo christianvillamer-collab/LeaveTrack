@@ -29,6 +29,7 @@ interface EmployeeRow {
 
 interface AuditRequestRow {
   id: string;
+  reference: string;
   start_date: string;
   end_date: string;
   days: number;
@@ -47,6 +48,7 @@ interface AuditEventRow {
   total: number;
   id: string;
   request_id: string;
+  request_reference: string;
   action: string;
   detail: string;
   occurred_at: Date;
@@ -103,7 +105,7 @@ function toEmployee(row: EmployeeRow): AuditReportEmployee {
 function toReportRequest(row: AuditRequestRow): AuditReportRequest {
   return {
     id: row.id,
-    reference: formatRequestReference(row.id),
+    reference: formatRequestReference(row.reference),
     leaveType: toLeaveType({
       id: row.leave_type_id,
       name: row.leave_type_name,
@@ -126,7 +128,7 @@ function toAuditEvent(row: AuditEventRow): AuditEvent {
   return {
     id: row.id,
     requestId: row.request_id,
-    requestReference: formatRequestReference(row.request_id),
+    requestReference: formatRequestReference(row.request_reference),
     employee: {
       id: row.employee_id,
       name: row.employee_name,
@@ -173,6 +175,7 @@ export async function getAuditReport(
     db<AuditRequestRow[]>`
       select
         r.id,
+        r.reference,
         r.start_date::text as start_date,
         r.end_date::text as end_date,
         (r.end_date - r.start_date + 1)::int as days,
@@ -254,6 +257,7 @@ async function queryAuditEventsForEmployee(
       count(*) over ()::int as total,
       a.id,
       a.leave_request_id as request_id,
+      r.reference as request_reference,
       a.action,
       coalesce(a.detail, '') as detail,
       a.occurred_at,
@@ -358,6 +362,7 @@ export async function listRecentAuditEvents(limit: number): Promise<AuditEvent[]
     select
       a.id,
       a.leave_request_id as request_id,
+      r.reference as request_reference,
       a.action,
       coalesce(a.detail, '') as detail,
       a.occurred_at,
@@ -388,6 +393,7 @@ export async function listAuditEventsForRequest(requestId: string): Promise<Audi
     select
       a.id,
       a.leave_request_id as request_id,
+      r.reference as request_reference,
       a.action,
       coalesce(a.detail, '') as detail,
       a.occurred_at,

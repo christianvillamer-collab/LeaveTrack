@@ -56,16 +56,17 @@ describe("formatDays", () => {
 });
 
 describe("formatRequestReference", () => {
-  it("derives a stable reference from a UUID", () => {
-    expect(formatRequestReference("1f0c5e6a-9d2b-4a71-8c33-0b7f4e2d9a10")).toBe("LR-4E2D9A10");
+  it("preserves a backfilled reference unchanged", () => {
+    expect(formatRequestReference("LR-4E2D9A10")).toBe("LR-4E2D9A10");
+    expect(formatRequestReference("LR-00000001")).toBe("LR-00000001");
   });
 
-  it("does not depend on separators or casing", () => {
-    expect(formatRequestReference("1F0C5E6A9D2B4A718C330B7F4E2D9A10")).toBe("LR-4E2D9A10");
+  it("preserves a sequence-generated reference unchanged", () => {
+    expect(formatRequestReference("LR-0000ABCD")).toBe("LR-0000ABCD");
   });
 
-  it("keeps sequential seed UUIDs distinct", () => {
-    expect(formatRequestReference("b0000000-0000-4000-8000-000000000001")).toBe("LR-00000001");
-    expect(formatRequestReference("b0000000-0000-4000-8000-000000000002")).toBe("LR-00000002");
+  it("does not derive a reference from a request UUID", () => {
+    const uuid = "1f0c5e6a-9d2b-4a71-8c33-0b7f4e2d9a10";
+    expect(formatRequestReference(uuid)).toBe(uuid);
   });
 });

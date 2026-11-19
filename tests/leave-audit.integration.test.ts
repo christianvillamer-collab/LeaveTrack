@@ -5,7 +5,6 @@ import { getDb } from "@/lib/db/client";
 import { createLeaveRequest, decideLeaveRequest, listLeaveTypes } from "@/lib/db/leave";
 import { findUserByEmail, type DbUser } from "@/lib/db/users";
 import type { LeaveType } from "@/lib/types";
-import { formatRequestReference } from "@/lib/utils/format";
 
 const hasDatabase = Boolean(process.env.DATABASE_URL);
 
@@ -104,12 +103,15 @@ describe.skipIf(!hasDatabase)("employee audit report", () => {
     expect(report?.employee.id).toBe(maya.id);
 
     const entry = report?.requests.find((request) => request.id === requestId);
+    const [stored] = await getDb()<{ reference: string }[]>`
+      select reference from leave_requests where id = ${requestId}
+    `;
 
     expect(entry).toBeDefined();
     expect(entry?.status).toBe("rejected");
     expect(entry?.decidedBy?.id).toBe(daniel.id);
     expect(entry?.decidedAt).toBeTruthy();
-    expect(entry?.reference).toBe(formatRequestReference(requestId));
+    expect(entry?.reference).toBe(stored?.reference);
     expect(entry?.days).toBe(2);
 
     const events = report?.events.filter((event) => event.requestId === requestId) ?? [];

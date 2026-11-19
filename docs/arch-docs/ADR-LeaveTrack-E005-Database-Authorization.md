@@ -132,9 +132,9 @@ Migrations deliberately stay on `DIRECT_URL`/`DATABASE_URL` as the owner: creati
 policies requires ownership, and the app role must never hold DDL. The same applies to the repo's own
 tooling after the cutover:
 
-- `npm run test:db` — **owner only.** The DB suites `update users` and `delete from accrual_ledger`,
-  which `leavetrack_app` cannot do by design. Run `DATABASE_URL="$DIRECT_URL" npm run test:db`
-  (and keep `DIRECT_URL` on the owner).
+- `npm run test:db` — **owner only.** The DB suites `update users`, which `leavetrack_app` cannot do
+  by design; accrual fixtures are append-only and use run-unique periods instead of ledger deletes
+  (E2-17). Run `DATABASE_URL="$DIRECT_URL" npm run test:db` (and keep `DIRECT_URL` on the owner).
 - `npm run db:migrate` / `npm run db:seed` — **owner only.** Both scripts now refuse a
   `leavetrack_app` connection and exit with an explanatory error.
 - `tests/db-authorization.integration.test.ts` is read-only and safe to point at the project.

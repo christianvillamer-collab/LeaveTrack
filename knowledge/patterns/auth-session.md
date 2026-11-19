@@ -110,8 +110,22 @@ becomes necessary only when an employee changes their email. If you add it, stor
 10. Integration: `findUserByEmail` resolves mixed-case email to one row and relies on
     `users_email_lower_unique`.
 
+## Login navigation and first-load fan-out
+
+Password sign-in belongs in the public Route Handler `POST /auth/login`, not in a page-hosted Server
+Action. Next 16 re-renders the posting page whenever a Server Action mutates cookies; because
+`/login` reads the session, that re-render would see the fresh cookies and stream `/dashboard` through
+the login POST until the platform timeout. The route writes Supabase cookies onto its Response via
+`createSupabaseRouteClient(request)`. A hydrated form fetches the route and hard-navigates to the
+`safeNextPath`-validated `redirectTo`; a no-JS form posts to the same route and receives a 303. Never
+move the cookie mutation back into `app/(auth)/login` or let that page redirect after sign-in.
+
+Protected shell links use `prefetch={false}` so a fresh session does not spawn one RSC/DB request per
+nav item while the dashboard is rendering, and `getDb()` stays at one connection per serverless
+instance to avoid transaction-pooler exhaustion under that fan-out.
+
 See `lib/auth/supabase.ts`, `lib/auth/session.ts`, `lib/auth/safe-next-path.ts`, `proxy.ts`,
-`app/(app)/layout.tsx`, `app/(app)/actions.ts`, `app/auth/callback/route.ts`,
+`app/(app)/layout.tsx`, `app/(app)/actions.ts`, `app/auth/login/route.ts`, `app/auth/callback/route.ts`,
 `tests/auth-session.test.ts`, `tests/proxy-auth.test.ts`, `tests/supabase-proxy-client.test.ts`,
-`tests/sign-out.test.ts`, `tests/safe-next-path.test.ts`, and
+`tests/auth-login-route.test.ts`, `tests/sign-out.test.ts`, `tests/safe-next-path.test.ts`, and
 `tests/auth-identity.integration.test.ts`.

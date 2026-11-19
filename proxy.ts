@@ -9,7 +9,7 @@ import { createSupabaseProxyClient, isAuthConfigured } from "@/lib/auth/supabase
 // The `PUBLIC_AUTH_PATHS` routes can still carry a session, so the proxy
 // refreshes them: their pages read the session in a Server Component, where a
 // cookie write is swallowed, and a lost refresh-token rotation can revoke it.
-const PUBLIC_AUTH_PATHS = new Set(["/login", "/auth/callback", "/forbidden"]);
+const PUBLIC_AUTH_PATHS = new Set(["/login", "/auth/login", "/auth/callback", "/forbidden"]);
 const PUBLIC_SYSTEM_PATHS = new Set([
   "/api/health",
   "/api/jobs/accrual",

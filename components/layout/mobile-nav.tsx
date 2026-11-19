@@ -86,11 +86,12 @@ export function MobileNav({ name, email, role, unreadNotifications }: MobileNavP
   return (
     <>
       <header className="border-border bg-background/95 sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b px-4 backdrop-blur lg:hidden">
-        <Brand variant="light" />
+        <Brand variant="light" prefetch={false} />
         <div className="flex items-center gap-2">
           <PreviewBadge className="xs:inline-flex hidden" />
           <Link
             href="/notifications"
+            prefetch={false}
             aria-label={
               unreadNotifications > 0
                 ? `Notifications, ${unreadNotifications} unread`
@@ -137,7 +138,7 @@ export function MobileNav({ name, email, role, unreadNotifications }: MobileNavP
             className="bg-surface absolute inset-y-0 right-0 flex w-[min(20rem,85vw)] flex-col shadow-lg"
           >
             <div className="border-border flex h-14 items-center justify-between border-b px-4">
-              <Brand variant="light" />
+              <Brand variant="light" prefetch={false} />
               <Button
                 ref={closeButtonRef}
                 type="button"
@@ -173,6 +174,7 @@ export function MobileNav({ name, email, role, unreadNotifications }: MobileNavP
                         <li key={item.href}>
                           <Link
                             href={item.href}
+                            prefetch={false}
                             aria-current={active ? "page" : undefined}
                             onClick={() => setOpen(false)}
                             className={cn(
@@ -220,6 +222,7 @@ export function MobileNav({ name, email, role, unreadNotifications }: MobileNavP
               <li key={item.href} className="flex-1">
                 <Link
                   href={item.href}
+                  prefetch={false}
                   aria-current={active ? "page" : undefined}
                   className={cn(
                     "text-caption flex flex-col items-center gap-1 px-1 py-2.5 font-medium",

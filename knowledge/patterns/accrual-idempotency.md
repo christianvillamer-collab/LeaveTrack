@@ -47,6 +47,11 @@ Why this shape:
 - The key is per `(user, leave type, month)`, so a user added mid-month accrues
   on the next run, and concurrent triggers are safe.
 - Numeric columns only; never add accrual in JavaScript floats.
+- The ledger is **append-only** (E2-17). `0009_accrual_ledger_guard_and_references.sql`
+  installs a `BEFORE DELETE OR UPDATE` trigger that raises `accrual_ledger is append-only`,
+  and revokes `EXECUTE` on the trigger function from `PUBLIC`, `anon`, and `authenticated`.
+  A purge followed by a rerun must never silently double-accrue; correcting a bad run needs an
+  explicit, separately signed-off compensating entry, not a rewrite of history.
 
 The `days` value itself is resolved per month, not read from a single mutable row: a rate
 change must affect only later periods. The ledger makes the run idempotent; effective dating
@@ -66,7 +71,8 @@ where user_id = $1 and leave_type_id = $2
 - `created_at` is the **run time**; `period` is the **month marker**. Show it as
   "Last accrual <date>", keep `period` for idempotency. Approvals can change
   confirmed balances after that date, so never label the date a balance
-  snapshot.
+  snapshot. Both columns are immutable once written — the append-only trigger
+  rejects UPDATE as well as DELETE, so `lastAccruedAt` cannot be backdated.
 - No ledger row means no accrual has ever run — return `null` and render
   "No accrual", never `new Date()` or the balance row's timestamp.
 - Untracked types (`tracks_balance = false`) are always `null`, even if a stray
@@ -84,10 +90,14 @@ where user_id = $1 and leave_type_id = $2
   `leave_balances` update trigger must not be conflated with an accrual).
 - A run sets `lastAccruedAt` to that ledger row's `created_at`, and a balance
   read with no ledger row returns `null`.
-- Snapshot and restore balances in `afterAll`, and delete only the test period's
-  ledger rows, so the rest of the DB suite keeps its seeded expectations.
+- Snapshot and restore balances in `afterAll`, but **never delete ledger rows** — the
+  trigger rejects it. Pick a run-unique period beyond the current `max(period)` and insert with
+  `on conflict (user_id, leave_type_id, period) do nothing`, so a repeated suite run is a no-op
+  and the rest of the DB suite keeps its seeded expectations.
+- A negative test that DELETE and UPDATE of a ledger row both raise `accrual_ledger is append-only`.
 
-See `db/migrations/0002_accrual_ledger.sql`, `lib/db/accrual.ts`, and
+See `db/migrations/0002_accrual_ledger.sql`,
+`db/migrations/0009_accrual_ledger_guard_and_references.sql`, `lib/db/accrual.ts`, and
 `tests/leave-accrual.integration.test.ts`.
 
 ## Org-level accrual status

@@ -6,23 +6,36 @@ import { getDb } from "@/lib/db/client";
 import { getMyLeaveData, getTeamLeaveData } from "@/lib/db/leave";
 import { listPolicyOverview } from "@/lib/db/policies";
 import { findUserByEmail, listDirectory } from "@/lib/db/users";
-import { formatRequestReference } from "@/lib/utils/format";
 
 const hasDatabase = Boolean(process.env.DATABASE_URL);
 
-/** Test periods live in 2399 so they sort after any real or seeded accrual row. */
-async function clearTestLedger(): Promise<void> {
-  await getDb()`
-    delete from accrual_ledger
-    where period >= '2399-01-01'
-      and period < '2400-01-01'
+function addMonth(isoDate: string): string {
+  const [year, month] = isoDate.split("-").map(Number);
+  return new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+}
+
+/** Ledger rows are append-only (E2-17), so test rows always follow the max period. */
+async function nextLedgerPeriod(): Promise<string> {
+  const [row] = await getDb()<{ period: string | null }[]>`
+    select max(period)::text as period from accrual_ledger
   `;
+
+  return addMonth(row?.period ?? "8998-12-01");
+}
+
+/** A December strictly after the max period exercises the January rollover. */
+async function nextDecemberPeriod(): Promise<string> {
+  const [row] = await getDb()<{ period: string | null }[]>`
+    select max(period)::text as period from accrual_ledger
+  `;
+
+  const year = Number((row?.period ?? "8998-12-01").slice(0, 4)) + 1;
+  return `${year}-12-01`;
 }
 
 describe.skipIf(!hasDatabase)("dashboard data", () => {
   afterAll(async () => {
     if (hasDatabase) {
-      await clearTestLedger();
       await getDb().end({ timeout: 5 });
     }
   });
@@ -46,27 +59,25 @@ describe.skipIf(!hasDatabase)("dashboard data", () => {
       throw new Error("Seed leave types are missing; run npm run db:seed.");
     }
 
-    await clearTestLedger();
+    const firstPeriod = await nextLedgerPeriod();
+    const lastPeriod = addMonth(firstPeriod);
 
-    // Two people in April, one person in May: the latest period has one person.
+    // Two people in the earlier period, one in the latest: one person processed.
     await getDb()`
       insert into accrual_ledger (user_id, leave_type_id, period, days)
       values
-        (${maya.id}, ${vacation.id}, '2399-04-01', 1),
-        (${daniel.id}, ${vacation.id}, '2399-04-01', 1),
-        (${maya.id}, ${vacation.id}, '2399-05-01', 1)
+        (${maya.id}, ${vacation.id}, ${firstPeriod}::date, 1),
+        (${daniel.id}, ${vacation.id}, ${firstPeriod}::date, 1),
+        (${maya.id}, ${vacation.id}, ${lastPeriod}::date, 1)
+      on conflict (user_id, leave_type_id, period) do nothing
     `;
 
-    try {
-      const summary = await getAccrualSummary();
+    const summary = await getAccrualSummary();
 
-      expect(summary.lastPeriod).toBe("2399-05-01");
-      expect(summary.nextRunAt).toBe("2399-06-01");
-      expect(summary.peopleProcessed).toBe(1);
-      expect(summary.lastRunAt).not.toBeNull();
-    } finally {
-      await clearTestLedger();
-    }
+    expect(summary.lastPeriod).toBe(lastPeriod);
+    expect(summary.nextRunAt).toBe(addMonth(lastPeriod));
+    expect(summary.peopleProcessed).toBe(1);
+    expect(summary.lastRunAt).not.toBeNull();
   });
 
   it("rolls the next run into January of the following year", async () => {
@@ -85,21 +96,19 @@ describe.skipIf(!hasDatabase)("dashboard data", () => {
       throw new Error("Seed leave types are missing; run npm run db:seed.");
     }
 
-    await clearTestLedger();
+    const decemberPeriod = await nextDecemberPeriod();
+    const nextYear = Number(decemberPeriod.slice(0, 4)) + 1;
 
     await getDb()`
       insert into accrual_ledger (user_id, leave_type_id, period, days)
-      values (${maya.id}, ${vacation.id}, '2399-12-01', 1)
+      values (${maya.id}, ${vacation.id}, ${decemberPeriod}::date, 1)
+      on conflict (user_id, leave_type_id, period) do nothing
     `;
 
-    try {
-      const summary = await getAccrualSummary();
+    const summary = await getAccrualSummary();
 
-      expect(summary.lastPeriod).toBe("2399-12-01");
-      expect(summary.nextRunAt).toBe("2400-01-01");
-    } finally {
-      await clearTestLedger();
-    }
+    expect(summary.lastPeriod).toBe(decemberPeriod);
+    expect(summary.nextRunAt).toBe(`${nextYear}-01-01`);
   });
 
   it("groups the policy snapshot by leave type with assigned headcount", async () => {
@@ -159,12 +168,19 @@ describe.skipIf(!hasDatabase)("dashboard data", () => {
 
     const mine = await getMyLeaveData(maya.id);
     const team = await getTeamLeaveData(daniel.id);
+    const requests = [...mine.requests, ...team.requests];
 
     expect(mine.requests.length).toBeGreaterThan(0);
     expect(team.requests.length).toBeGreaterThan(0);
 
-    for (const request of [...mine.requests, ...team.requests]) {
-      expect(request.reference).toBe(formatRequestReference(request.id));
+    const rows = await getDb()<{ id: string; reference: string }[]>`
+      select id, reference from leave_requests where id = any(${requests.map((r) => r.id)}::uuid[])
+    `;
+    const stored = new Map(rows.map((row) => [row.id, row.reference]));
+
+    for (const request of requests) {
+      expect(request.reference).toBe(stored.get(request.id));
+      expect(request.reference).toMatch(/^LR-[0-9A-F]{8}$/);
     }
   });
 });

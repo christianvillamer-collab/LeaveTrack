@@ -1,3 +1,5 @@
+import { randomInt } from "node:crypto";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { runAccrual } from "@/lib/db/accrual";
@@ -26,8 +28,19 @@ interface BalanceRow {
 const key = (userId: string, leaveTypeId: string) => `${userId}:${leaveTypeId}`;
 
 describe.skipIf(!hasDatabase)("monthly accrual", () => {
-  // A far-future month keeps the test independent of real accrual history.
-  const period = `${2400 + Math.floor(Math.random() * 100)}-01-01`;
+  // Far-future, run-unique months keep the suite independent of real history.
+  // Ledger rows are append-only (E2-17), so they are never deleted in cleanup.
+  // Random year/month avoids collisions between two runs in the same second.
+  const baseYear = 2400 + randomInt(0, 2000);
+  const month = randomInt(1, 13);
+  const monthText = String(month).padStart(2, "0");
+  const nextMonthYear = month === 12 ? baseYear + 501 : baseYear + 500;
+  const nextMonthText = String(month === 12 ? 1 : month + 1).padStart(2, "0");
+  const period = `${baseYear}-${monthText}-01`;
+  const effectivePrePeriod = `${baseYear + 500}-${monthText}-01`;
+  const effectivePostPeriod = `${nextMonthYear}-${nextMonthText}-01`;
+  const inactivePeriod = `${baseYear + 600}-${monthText}-01`;
+  const guardPeriod = `${baseYear + 700}-${monthText}-01`;
 
   let policies: PolicyRow[] = [];
   let balancesBefore = new Map<string, string>();
@@ -89,11 +102,6 @@ describe.skipIf(!hasDatabase)("monthly accrual", () => {
       `;
     }
 
-    await getDb()`
-      delete from accrual_ledger
-      where period = ${period}::date
-    `;
-
     await getDb().end({ timeout: 5 });
   });
 
@@ -125,17 +133,18 @@ describe.skipIf(!hasDatabase)("monthly accrual", () => {
       const balances = await getBalancesForUser(sample.user_id);
       const balance = balances.find((item) => item.leaveType.id === sample.leave_type_id);
       const [ledger] = await getDb()<{ created_at: Date }[]>`
-        select created_at
+        select max(created_at) as created_at
         from accrual_ledger
         where user_id = ${sample.user_id}
           and leave_type_id = ${sample.leave_type_id}
-          and period = ${period}::date
       `;
 
-      if (!balance || !ledger) {
+      if (!balance || !ledger?.created_at) {
         throw new Error("The accrual run did not produce a readable ledger balance.");
       }
 
+      // Append-only rows from other suites may be newer, so the read must track
+      // the ledger's max(created_at), not assume this run's row is the latest.
       expect(balance.lastAccruedAt).toBe(ledger.created_at.toISOString());
     }
 
@@ -164,9 +173,36 @@ describe.skipIf(!hasDatabase)("monthly accrual", () => {
     expect(await ledgerCount()).toBe(ledgerBeforeRerun);
   });
 
+  it("blocks ledger deletion and updates", async () => {
+    const [inserted] = await getDb()<{ id: string }[]>`
+      insert into accrual_ledger (user_id, leave_type_id, period, days)
+      values (${MAYA_ID}, ${VACATION_ID}, ${guardPeriod}::date, 1)
+      on conflict (user_id, leave_type_id, period) do nothing
+      returning id
+    `;
+
+    const id = inserted?.id;
+    expect(id).toBeTruthy();
+
+    if (!id) {
+      throw new Error("The guard-period ledger row was not inserted.");
+    }
+
+    await expect(getDb()`
+      delete from accrual_ledger
+      where id = ${id}
+    `).rejects.toThrow(/append-only/);
+
+    await expect(getDb()`
+      update accrual_ledger
+      set days = 2
+      where id = ${id}
+    `).rejects.toThrow(/append-only/);
+  });
+
   it("uses the rate effective for the run period, not today's rate (AC4)", async () => {
-    const prePeriod = "2550-01-01";
-    const postPeriod = "2550-02-01";
+    const prePeriod = effectivePrePeriod;
+    const postPeriod = effectivePostPeriod;
     const newRate = 2.5;
     const pair = key(MAYA_ID, VACATION_ID);
     const before = await snapshotBalances();
@@ -225,11 +261,6 @@ describe.skipIf(!hasDatabase)("monthly accrual", () => {
       }
 
       await getDb()`
-        delete from accrual_ledger
-        where period in (${prePeriod}::date, ${postPeriod}::date)
-      `;
-
-      await getDb()`
         delete from leave_policies
         where user_id = ${MAYA_ID}
           and leave_type_id = ${VACATION_ID}
@@ -239,7 +270,6 @@ describe.skipIf(!hasDatabase)("monthly accrual", () => {
   });
 
   it("does not accrue for a deactivated person", async () => {
-    const inactivePeriod = "2670-01-01";
     const before = await snapshotBalances();
 
     await getDb()`
@@ -284,11 +314,6 @@ describe.skipIf(!hasDatabase)("monthly accrual", () => {
         set is_active = true,
             deactivated_at = null
         where id = ${MAYA_ID}
-      `;
-
-      await getDb()`
-        delete from accrual_ledger
-        where period = ${inactivePeriod}::date
       `;
 
       for (const [pair, balance] of before) {

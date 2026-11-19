@@ -22,7 +22,6 @@ describe.skipIf(!hasDatabase)("leave decision", () => {
   const originalBalances = new Map<string, number>();
   const createdIds: string[] = [];
   const accrualPeriod = "2399-01-01";
-  let seededAccrual = false;
 
   beforeAll(async () => {
     const manager = await findUserByEmail("daniel.okafor@leavetrack.demo");
@@ -66,21 +65,11 @@ describe.skipIf(!hasDatabase)("leave decision", () => {
       values (${maya.id}, ${sick.id}, ${accrualPeriod}::date, 0.01)
       on conflict (user_id, leave_type_id, period) do nothing
     `;
-    seededAccrual = true;
   });
 
   afterAll(async () => {
     if (!hasDatabase) {
       return;
-    }
-
-    if (seededAccrual) {
-      await getDb()`
-        delete from accrual_ledger
-        where user_id = ${maya.id}
-          and leave_type_id = ${sick.id}
-          and period = ${accrualPeriod}::date
-      `;
     }
 
     for (const id of createdIds) {

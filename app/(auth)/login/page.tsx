@@ -77,7 +77,7 @@ export default async function LoginPage({
           className="absolute inset-0 bg-[radial-gradient(circle_at_20%_15%,hsl(164_45%_24%),transparent_45%),radial-gradient(circle_at_85%_85%,hsl(164_50%_18%),transparent_50%)]"
         />
         <div className="relative">
-          <Brand />
+          <Brand prefetch={false} />
         </div>
 
         <div className="relative max-w-md space-y-8">
@@ -123,7 +123,7 @@ export default async function LoginPage({
       <section className="flex items-center justify-center px-5 py-10 sm:px-8">
         <div className="w-full max-w-md space-y-8">
           <div className="flex flex-col items-start gap-3 lg:hidden">
-            <Brand variant="light" />
+            <Brand variant="light" prefetch={false} />
           </div>
 
           <div className="space-y-2">

@@ -6,6 +6,21 @@ import { findUserByEmail } from "@/lib/db/users";
 
 const hasDatabase = Boolean(process.env.DATABASE_URL);
 
+/** Ledger rows are append-only (E2-17), so test rows always follow the max period. */
+async function nextLedgerPeriod(): Promise<string> {
+  const [row] = await getDb()<{ period: string | null }[]>`
+    select max(period)::text as period from accrual_ledger
+  `;
+  const [year, month] = (row?.period ?? "8998-12-01").split("-").map(Number);
+
+  return new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+}
+
+function addMonth(isoDate: string): string {
+  const [year, month] = isoDate.split("-").map(Number);
+  return new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+}
+
 describe.skipIf(!hasDatabase)("leave balance data", () => {
   afterAll(async () => {
     if (hasDatabase) {
@@ -68,34 +83,34 @@ describe.skipIf(!hasDatabase)("leave balance data", () => {
       throw new Error("Seed leave types are missing; run npm run db:seed.");
     }
 
-    const cleanup = async () => {
-      await getDb()`
-        delete from accrual_ledger
-        where user_id in (${user.id}, ${other.id})
-          and leave_type_id = ${vacationType.id}
-          and period in ('2399-01-01', '2399-02-01', '2399-03-01')
-      `;
-    };
+    const firstPeriod = await nextLedgerPeriod();
+    const secondPeriod = addMonth(firstPeriod);
+    const otherPeriod = addMonth(secondPeriod);
 
-    await cleanup();
     await getDb()`
       insert into accrual_ledger (user_id, leave_type_id, period, days, created_at)
       values
-        (${user.id}, ${vacationType.id}, '2399-01-01', 0.01, timestamptz '2399-01-01 00:00:00+00'),
-        (${user.id}, ${vacationType.id}, '2399-02-01', 0.01, timestamptz '2399-02-01 00:00:00+00'),
-        (${other.id}, ${vacationType.id}, '2399-03-01', 0.01, timestamptz '2399-03-01 00:00:00+00')
+        (
+          ${user.id}, ${vacationType.id}, ${firstPeriod}::date, 0.01,
+          (${firstPeriod}::date + time '00:00:00') at time zone 'UTC'
+        ),
+        (
+          ${user.id}, ${vacationType.id}, ${secondPeriod}::date, 0.01,
+          (${secondPeriod}::date + time '00:00:00') at time zone 'UTC'
+        ),
+        (
+          ${other.id}, ${vacationType.id}, ${otherPeriod}::date, 0.01,
+          (${otherPeriod}::date + time '00:00:00') at time zone 'UTC'
+        )
+      on conflict (user_id, leave_type_id, period) do nothing
     `;
 
-    try {
-      const balances = await getBalancesForUser(user.id);
-      const vacation = balances.find((balance) => balance.leaveType.id === vacationType.id);
+    const balances = await getBalancesForUser(user.id);
+    const vacation = balances.find((balance) => balance.leaveType.id === vacationType.id);
 
-      // Feb is this user's newest row: `min` would return Jan, and dropping the
-      // user predicate would return the other user's later March row.
-      expect(vacation?.lastAccruedAt).toBe(new Date("2399-02-01T00:00:00.000Z").toISOString());
-    } finally {
-      await cleanup();
-    }
+    // The second row is this user's newest: `min` would return the first, and
+    // dropping the user predicate would return the other user's later row.
+    expect(vacation?.lastAccruedAt).toBe(`${secondPeriod}T00:00:00.000Z`);
   });
 
   it("returns active own requests and lets the page filter pending", async () => {
