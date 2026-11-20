@@ -80,6 +80,19 @@ vi.mock("@/lib/db/policies", () => ({
 }));
 
 vi.mock("@/lib/db/people", () => ({
+  createPerson: async () => ({
+    id: "created",
+    name: "New Person",
+    email: "new.person@leavetrack.demo",
+    role: "employee",
+    managerId: null,
+    managerName: null,
+    jobTitle: null,
+    team: null,
+    isActive: true,
+    deactivatedAt: null,
+    authSubjectLinked: false,
+  }),
   bulkImportPeople: async () => ({ created: 1, updated: 0, unchanged: 0 }),
   reassignManager: async () => ({
     id: "person",
@@ -125,6 +138,7 @@ import { POST as postOverride } from "@/app/api/leave-requests/[id]/override/rou
 import { GET as getNotifications } from "@/app/api/notifications/route";
 import { POST as postReadNotification } from "@/app/api/notifications/[id]/read/route";
 import { POST as postReadAll } from "@/app/api/notifications/read-all/route";
+import { POST as postCreatePerson } from "@/app/api/people/route";
 import { POST as postImportPeople } from "@/app/api/people/import/route";
 import { POST as postManager } from "@/app/api/people/[id]/manager/route";
 import { POST as postProfile } from "@/app/api/people/[id]/profile/route";
@@ -297,6 +311,21 @@ const routes: ReadonlyArray<RouteCase> = [
           leaveTypeId: LEAVE_TYPE,
           accrualPerMonth: 1.5,
           effectiveFrom: "2027-01-01",
+        }),
+      ),
+  },
+  {
+    name: "POST /api/people",
+    gate: "session",
+    allowedRole: "hr_admin",
+    forbiddenRoles: ["employee", "manager"],
+    successStatus: 201,
+    invoke: () =>
+      postCreatePerson(
+        post("/api/people", {
+          name: "New Person",
+          email: "new.person@leavetrack.demo",
+          role: "employee",
         }),
       ),
   },

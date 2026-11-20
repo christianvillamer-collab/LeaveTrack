@@ -344,6 +344,41 @@ describe.skipIf(!hasDatabase)("database authorization", () => {
     expect(balanceCheck.expression).toContain("-10000");
   });
 
+  it("accepts the E2-23 created people action and still rejects unknown actions", async () => {
+    const [constraint] = await sql<{ expression: string }[]>`
+      select pg_get_constraintdef(oid) as expression
+      from pg_constraint
+      where conname = 'user_audit_log_action_check'
+    `;
+    for (const action of [
+      "profile_updated",
+      "manager_reassigned",
+      "deactivated",
+      "reactivated",
+      "imported",
+      "created",
+    ]) {
+      expect(constraint.expression, `people audit action ${action}`).toContain(action);
+    }
+
+    const [actor] = await sql<{ id: string }[]>`
+      select id from users limit 1
+    `;
+    await expect(
+      sql`
+        insert into user_audit_log (actor_id, subject_id, action, detail)
+        values (${actor.id}, ${actor.id}, 'unknown_action', 'E2-23 constraint probe')
+      `,
+    ).rejects.toMatchObject({ code: "23514" });
+
+    for (const privilege of ["DELETE", "TRUNCATE"]) {
+      expect(
+        await tablePrivilege(sql, "leavetrack_app", "user_audit_log", privilege),
+        `user_audit_log ${privilege}`,
+      ).toBe(false);
+    }
+  });
+
   it("keeps audit_log append-only under E2-11", async () => {
     const triggers = await sql<{ tgname: string }[]>`
       select tgname

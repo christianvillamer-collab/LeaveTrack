@@ -1,6 +1,6 @@
 # ADR-LeaveTrack-E2-09 — People Administration
 
-**Status:** Accepted — HR people admin (manager assignment, profile edits, deactivation, bulk import) lands in E2-09.
+**Status:** Accepted — HR people admin (manager assignment, profile edits, deactivation, bulk import), with the E2-23 single-user-add addendum, lands in E2-09.
 
 ## Context
 
@@ -86,8 +86,9 @@ Role changes on existing rows are ignored. Provider account creation/invites sta
 `user_audit_log (actor_id, subject_id, action, detail, created_at)` with
 `prevent_hard_delete()` and `prevent_audit_update()` triggers. A real change writes exactly one
 row; a no-op writes none. `action` is constrained to
-`profile_updated | manager_reassigned | deactivated | reactivated | imported`. The `users` table
-also gets `prevent_hard_delete()` so BR-04 holds at the database boundary.
+`profile_updated | manager_reassigned | deactivated | reactivated | imported | created` (the last
+value was added by the E2-23 addendum in migration `0010`). The `users` table also gets
+`prevent_hard_delete()` so BR-04 holds at the database boundary.
 
 ### 6. Authorization stays centralized
 
@@ -95,14 +96,26 @@ also gets `prevent_hard_delete()` so BR-04 holds at the database boundary.
 `getSession`; the record-level guards live in the transactional SQL. No page or route
 post-filters or trusts a client-supplied actor id.
 
+### 7. Single-user add (E2-23 addendum)
+
+Accepted addendum; the decisions above are unchanged. `POST /api/people` creates one directory
+row for HR. The submitted `role` is an **initial** value: there is still no role editor for
+existing rows and no provider invite. The transaction takes the same `users.manager_graph`
+advisory lock as every other graph writer, rejects a case-insensitive duplicate email with 409,
+resolves `managerEmail` to an active `manager` (never an HR admin), inserts with
+`auth_subject = null`, and writes exactly one `user_audit_log` row with action `created`.
+`db/migrations/0010_people_create_action.sql` extends the append-only action CHECK; it grants
+nothing and changes no RLS policy.
+
 ## Consequences
 
 - Two emails can intentionally diverge (provider vs directory). The people UI says so, and the
   ADR records that the provider email is not used for display.
 - Unlinked rows (bulk imports) cannot sign in until `auth:seed` or a first sign-in links them.
 - The reporting-graph lock is process-independent (Postgres), so it also protects scripts. Every
-  writer of the graph (`reassignManager`, `bulkImportPeople`, `setPersonActive`) takes it first, in
-  the same order, so deactivation cannot race an import that is moving a report.
+  writer of the graph (`createPerson`, `reassignManager`, `bulkImportPeople`, `setPersonActive`)
+  takes it first, in the same order, so deactivation cannot race an import that is moving a
+  report.
 - Deactivated people are excluded from the HR roster/headcount and the manager team view, but stay
   in `listEmployees()` so their audit history remains reachable. The policy rate picker opts into
   `includeInactive` so a leaver's historical rate can still be corrected.

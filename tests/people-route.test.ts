@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
+import { AppError, ERROR_CODES } from "@/lib/api/errors";
+
 const state = vi.hoisted(() => ({
   session: null as null | {
     id: string;
@@ -13,6 +15,21 @@ const state = vi.hoisted(() => ({
   managerCalls: [] as unknown[],
   statusCalls: [] as unknown[],
   importCalls: [] as unknown[],
+  createCalls: [] as unknown[],
+  createFailure: null as Error | null,
+  createdPerson: {
+    id: "a0000000-0000-4000-8000-000000000020",
+    name: "Alex Rivera",
+    email: "alex.rivera@leavetrack.demo",
+    role: "manager" as const,
+    managerId: null,
+    managerName: null,
+    jobTitle: null,
+    team: null,
+    isActive: true,
+    deactivatedAt: null,
+    authSubjectLinked: false,
+  },
 }));
 
 vi.mock("@/lib/auth/session", () => ({
@@ -41,8 +58,16 @@ vi.mock("@/lib/db/people", () => ({
     state.importCalls.push({ actorId, rows });
     return { created: 1, updated: 0, skipped: 0 };
   },
+  createPerson: async (actorId: string, input: unknown) => {
+    state.createCalls.push({ actorId, input });
+    if (state.createFailure) {
+      throw state.createFailure;
+    }
+    return state.createdPerson;
+  },
 }));
 
+import { POST as createPersonRoute } from "@/app/api/people/route";
 import { POST as importPeople } from "@/app/api/people/import/route";
 import { POST as assignManager } from "@/app/api/people/[id]/manager/route";
 import { POST as updateProfile } from "@/app/api/people/[id]/profile/route";
@@ -65,6 +90,15 @@ const validProfile = {
   team: "Product",
 };
 
+const validCreate = {
+  name: "  Alex Rivera  ",
+  email: " alex.rivera@leavetrack.demo ",
+  role: "manager",
+  managerEmail: null,
+  jobTitle: "   ",
+  team: "",
+};
+
 function request(body: unknown, path = "/api/people"): NextRequest {
   return new NextRequest(`http://localhost${path}`, {
     method: "POST",
@@ -83,6 +117,8 @@ beforeEach(() => {
   state.managerCalls = [];
   state.statusCalls = [];
   state.importCalls = [];
+  state.createCalls = [];
+  state.createFailure = null;
 });
 
 describe("POST /api/people/:id/profile", () => {
@@ -238,5 +274,102 @@ describe("POST /api/people/import", () => {
 
     expect(response.status).toBe(400);
     expect(state.importCalls).toHaveLength(0);
+  });
+});
+
+describe("POST /api/people", () => {
+  it("returns 401 without a session", async () => {
+    state.session = null;
+
+    const response = await createPersonRoute(request(validCreate));
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error: { code: "UNAUTHENTICATED" },
+    });
+    expect(state.createCalls).toHaveLength(0);
+  });
+
+  it("returns 403 for employees and managers", async () => {
+    for (const role of ["employee", "manager"] as const) {
+      state.session = { ...hr, role };
+
+      const response = await createPersonRoute(request(validCreate));
+
+      expect(response.status, role).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({
+        success: false,
+        error: { code: "FORBIDDEN" },
+      });
+    }
+
+    expect(state.createCalls).toHaveLength(0);
+  });
+
+  it("returns 400 for a malformed body", async () => {
+    const response = await createPersonRoute(
+      new NextRequest("http://localhost/api/people", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error: { code: "VALIDATION_ERROR" },
+    });
+    expect(state.createCalls).toHaveLength(0);
+  });
+
+  it("creates a person with the session actor and returns 201", async () => {
+    const response = await createPersonRoute(request(validCreate));
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      data: state.createdPerson,
+    });
+    expect(state.createCalls).toEqual([
+      {
+        actorId: hr.id,
+        input: {
+          name: "Alex Rivera",
+          email: "alex.rivera@leavetrack.demo",
+          role: "manager",
+          managerEmail: null,
+          jobTitle: null,
+          team: null,
+        },
+      },
+    ]);
+  });
+
+  it("maps a duplicate email to the standard 409 envelope", async () => {
+    state.createFailure = new AppError(ERROR_CODES.CONFLICT, "That email is already in use.", 409);
+
+    const response = await createPersonRoute(request(validCreate));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error: { code: "CONFLICT", message: "That email is already in use." },
+    });
+    expect(state.createCalls).toHaveLength(1);
+  });
+
+  it("maps a database failure to the standard 500 envelope", async () => {
+    state.createFailure = AppError.internal("The employee could not be created.");
+
+    const response = await createPersonRoute(request(validCreate));
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error: { code: "INTERNAL_ERROR", message: "The employee could not be created." },
+    });
+    expect(state.createCalls).toHaveLength(1);
   });
 });

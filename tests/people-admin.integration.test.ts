@@ -6,6 +6,7 @@ import { getDb } from "@/lib/db/client";
 import { listTeamLeaveRequests } from "@/lib/db/leave";
 import {
   bulkImportPeople,
+  createPerson,
   listPersonAudit,
   listPeople,
   reassignManager,
@@ -59,6 +60,16 @@ async function auditCount(subjectId: string, action?: string): Promise<number> {
     from user_audit_log
     where subject_id = ${subjectId}
       and (${action ?? null}::text is null or action = ${action ?? null})
+  `;
+
+  return row.count;
+}
+
+async function countByEmail(email: string): Promise<number> {
+  const [row] = await getDb()<{ count: number }[]>`
+    select count(*)::int as count
+    from users
+    where lower(email) = lower(${email})
   `;
 
   return row.count;
@@ -607,5 +618,175 @@ describe.skipIf(!hasDatabase)("HR people administration", () => {
     expect(new Date(entries[0].createdAt).getTime()).toBeGreaterThanOrEqual(
       new Date(entries[entries.length - 1].createdAt).getTime(),
     );
+  });
+
+  it("creates one person with a created audit row and no linked identity", async () => {
+    const email = uniqueEmail("created");
+    const created = await createPerson(PRIYA_ID, {
+      name: "  Created Person  ",
+      email: ` ${email} `,
+      role: "employee",
+      managerEmail: null,
+      jobTitle: "  Analyst  ",
+      team: "",
+    });
+
+    expect(created).toMatchObject({
+      name: "Created Person",
+      email,
+      role: "employee",
+      managerId: null,
+      managerName: null,
+      jobTitle: "Analyst",
+      team: null,
+      isActive: true,
+      deactivatedAt: null,
+      authSubjectLinked: false,
+    });
+
+    const [row] = await getDb()<{ auth_subject: string | null }[]>`
+      select auth_subject from users where id = ${created.id}
+    `;
+    expect(row.auth_subject).toBeNull();
+    expect(await auditCount(created.id, "created")).toBe(1);
+
+    const listed = await listPeople();
+    expect(listed.find((person) => person.id === created.id)).toMatchObject({
+      name: "Created Person",
+      email,
+      role: "employee",
+    });
+  });
+
+  it("allows initial manager and HR admin roles without leaving an extra active HR admin", async () => {
+    const manager = await createPerson(PRIYA_ID, {
+      name: "Created Manager",
+      email: uniqueEmail("created-manager"),
+      role: "manager",
+    });
+    const hr = await createPerson(PRIYA_ID, {
+      name: "Created HR",
+      email: uniqueEmail("created-hr"),
+      role: "hr_admin",
+    });
+
+    expect(manager).toMatchObject({ role: "manager", isActive: true });
+    expect(hr).toMatchObject({ role: "hr_admin", isActive: true });
+
+    try {
+      expect(await countByEmail(manager.email)).toBe(1);
+      expect(await countByEmail(hr.email)).toBe(1);
+      expect(await auditCount(manager.id, "created")).toBe(1);
+      expect(await auditCount(hr.id, "created")).toBe(1);
+    } finally {
+      // The last-active-HR-admin guard expects the seeded single admin on
+      // reruns. Users are never hard-deleted, so deactivate this fixture.
+      await getDb()`
+        update users
+        set is_active = false,
+            deactivated_at = now()
+        where id = ${hr.id}
+      `;
+    }
+  });
+
+  it("rejects a case-insensitive duplicate without writing a user or audit row", async () => {
+    const email = uniqueEmail("created-duplicate");
+    const existingId = await insertPerson({ email });
+
+    await expect(
+      createPerson(PRIYA_ID, {
+        name: "Duplicate Person",
+        email: email.toUpperCase(),
+        role: "employee",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    expect(await countByEmail(email)).toBe(1);
+    expect(await auditCount(existingId, "created")).toBe(0);
+  });
+
+  it("rejects self, unknown, inactive, and non-manager manager emails without creating a row", async () => {
+    const selfEmail = uniqueEmail("created-self");
+    const unknownManagerEmail = uniqueEmail("created-missing-manager");
+    const inactiveManagerEmail = uniqueEmail("created-inactive-manager");
+    const employeeManagerEmail = uniqueEmail("created-employee-manager");
+
+    await insertPerson({
+      name: "Inactive Create Manager",
+      email: inactiveManagerEmail,
+      role: "manager",
+      isActive: false,
+    });
+    await insertPerson({
+      name: "Employee Create Manager",
+      email: employeeManagerEmail,
+      role: "employee",
+    });
+
+    await expect(
+      createPerson(PRIYA_ID, {
+        name: "Self Manager",
+        email: selfEmail,
+        role: "employee",
+        managerEmail: selfEmail.toUpperCase(),
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+
+    await expect(
+      createPerson(PRIYA_ID, {
+        name: "Unknown Manager Report",
+        email: uniqueEmail("created-unknown-manager-report"),
+        role: "employee",
+        managerEmail: unknownManagerEmail,
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+
+    await expect(
+      createPerson(PRIYA_ID, {
+        name: "Inactive Manager Report",
+        email: uniqueEmail("created-inactive-manager-report"),
+        role: "employee",
+        managerEmail: inactiveManagerEmail,
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    await expect(
+      createPerson(PRIYA_ID, {
+        name: "Non Manager Report",
+        email: uniqueEmail("created-non-manager-report"),
+        role: "employee",
+        managerEmail: employeeManagerEmail,
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    expect(await countByEmail(selfEmail)).toBe(0);
+    expect(await countByEmail(unknownManagerEmail)).toBe(0);
+  });
+
+  it("creates a report under a batch-local manager without changing seeded reporting lines", async () => {
+    const manager = await createPerson(PRIYA_ID, {
+      name: "Create Queue Manager",
+      email: uniqueEmail("create-queue-manager"),
+      role: "manager",
+    });
+    const report = await createPerson(PRIYA_ID, {
+      name: "Create Queue Report",
+      email: uniqueEmail("create-queue-report"),
+      role: "employee",
+      managerEmail: manager.email,
+    });
+
+    expect(report).toMatchObject({
+      role: "employee",
+      managerId: manager.id,
+      managerName: "Create Queue Manager",
+    });
+    expect(await auditCount(report.id, "created")).toBe(1);
+
+    const [maya] = await getDb()<{ manager_id: string }[]>`
+      select manager_id from users where id = ${MAYA_ID}
+    `;
+    expect(maya.manager_id).toBe(DANIEL_ID);
   });
 });
