@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   managerAssignmentSchema,
   peopleImportSchema,
+  personCreateSchema,
   personIdSchema,
   personProfileSchema,
   personStatusSchema,
@@ -186,6 +187,68 @@ describe("peopleImportSchema", () => {
           password: "secret",
         },
       ]).success,
+    ).toBe(false);
+  });
+});
+
+describe("personCreateSchema", () => {
+  it("trims required fields and normalizes empty optional fields", () => {
+    const parsed = personCreateSchema.parse({
+      name: "  Alex Rivera  ",
+      email: "  alex.rivera@leavetrack.demo ",
+      role: "manager",
+      managerEmail: null,
+      jobTitle: "   ",
+      team: "",
+    });
+
+    expect(parsed).toEqual({
+      name: "Alex Rivera",
+      email: "alex.rivera@leavetrack.demo",
+      role: "manager",
+      managerEmail: null,
+      jobTitle: null,
+      team: null,
+    });
+  });
+
+  it("accepts an initial HR admin role and optional manager", () => {
+    expect(
+      personCreateSchema.safeParse({
+        name: "Priya Nair",
+        email: "priya.nair@leavetrack.demo",
+        role: "hr_admin",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects missing required fields, an invalid email, an unknown role, and unknown keys", () => {
+    expect(personCreateSchema.safeParse({ email: "a@b.com", role: "employee" }).success).toBe(false);
+    expect(
+      personCreateSchema.safeParse({ name: "Alex", email: "not-an-email", role: "employee" })
+        .success,
+    ).toBe(false);
+    expect(
+      personCreateSchema.safeParse({ name: "Alex", email: "a@b.com", role: "owner" }).success,
+    ).toBe(false);
+    expect(
+      personCreateSchema.safeParse({
+        name: "Alex",
+        email: "a@b.com",
+        role: "employee",
+        password: "secret",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects an invalid manager email", () => {
+    expect(
+      personCreateSchema.safeParse({
+        name: "Alex",
+        email: "alex@leavetrack.demo",
+        role: "employee",
+        managerEmail: "not-an-email",
+      }).success,
     ).toBe(false);
   });
 });

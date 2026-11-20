@@ -13,7 +13,7 @@ and `/requests/new` write to Postgres, while `GET /api/leave-requests` + `/balan
 `POST /api/leave-requests/:id/override`, and HR reads per-employee reports through
 `GET /api/audit/:userId` + `/audit`. HR sets effective-dated policy rates through
 `POST /api/policies` + `/settings/policies`, and manages people through `/settings/people` +
-`POST /api/people/*`. A monthly cron job accrues balances through
+`POST /api/people` + `POST /api/people/*`. A monthly cron job accrues balances through
 `GET`/`POST /api/jobs/accrual`. Every application screen is DB-backed; do not reintroduce
 `lib/mock/data.ts` into a page.
 
@@ -85,7 +85,7 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   role are never an identity source; never trust a client-supplied `userId`.
 - Route handlers are `/api/health`, `GET`/`POST /api/leave-requests`,
   `POST /api/leave-requests/:id/decision`, `POST /api/leave-requests/:id/override`,
-  `POST /api/policies`, `GET /api/audit/:userId`, `GET /api/notifications`,
+  `POST /api/policies`, `POST /api/people`, `GET /api/audit/:userId`, `GET /api/notifications`,
   `POST /api/notifications/:id/read`, `POST /api/notifications/read-all`,
   `GET`/`POST /api/jobs/accrual`, `GET`/`POST /api/jobs/notifications`, `POST /auth/login`,
   `POST /auth/demo-login`, and `GET /auth/callback`. All `/api/` failures must go through
@@ -122,6 +122,10 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   HR writes through `upsertPolicyRate` (`POST /api/policies`): past months are rejected, a real
   change upserts one dated row and inserts exactly one `policy_audit_log` row, and a same-month
   same-rate save is a no-op. Never rewrite past months or the request-bound `audit_log`.
+- People admin is HR-only. `POST /api/people` creates one directory row with an initial role (never
+  a role editor for existing rows), takes the `users.manager_graph` advisory lock first, and writes
+  exactly one append-only `user_audit_log` row with action `created` in the same transaction. New
+  rows have no `auth_subject`; the provider subject binds on first verified sign-in.
 - `scope=team` is manager-only (DB role). The direct-report filter is SQL:
   `employee.manager_id = :current_user_id`. Never post-filter in JS. HR override is separate; the
   `/approvals` page shows HR an explicit boundary state.

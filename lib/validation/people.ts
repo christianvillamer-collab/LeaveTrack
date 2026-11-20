@@ -48,6 +48,18 @@ const optionalImportText = z
 
 export const personIdSchema = z.uuid("Select a valid employee record.");
 
+/** HR single-user create (E2-23). Role is an initial value, not a role editor. */
+export const personCreateSchema = z
+  .object({
+    name: personName,
+    email: personEmail,
+    role: z.enum(["employee", "manager", "hr_admin"]),
+    managerEmail: emailField("Enter a valid manager email address.").nullable().optional(),
+    jobTitle: profileText.optional(),
+    team: profileText.optional(),
+  })
+  .strict();
+
 /** HR profile edit. The actor is resolved from the session, never the body. */
 export const personProfileSchema = z
   .object({
@@ -127,6 +139,7 @@ export const peopleImportSchema = z
     });
   });
 
+export type PersonCreateInput = z.infer<typeof personCreateSchema>;
 export type PersonProfileInput = z.infer<typeof personProfileSchema>;
 export type ManagerAssignmentInput = z.infer<typeof managerAssignmentSchema>;
 export type PersonStatusInput = z.infer<typeof personStatusSchema>;

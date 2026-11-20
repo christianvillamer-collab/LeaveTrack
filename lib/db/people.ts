@@ -41,6 +41,15 @@ export interface PeopleImportRow {
   team?: string | null;
 }
 
+export interface PersonCreateDbInput {
+  name: string;
+  email: string;
+  role: Role;
+  managerEmail?: string | null;
+  jobTitle?: string | null;
+  team?: string | null;
+}
+
 export interface PeopleImportResult {
   created: number;
   updated: number;
@@ -528,6 +537,132 @@ export async function setPersonActive(
       isActive,
     };
   });
+}
+
+/**
+ * Creates one person for the HR Add user flow (E2-23). The users row and its
+ * append-only audit row are written in one transaction. The manager-graph lock
+ * is taken first so this writer serializes with reassignment, import, and
+ * deactivation in the same order as every other graph writer.
+ */
+export async function createPerson(
+  actorId: string,
+  input: PersonCreateDbInput,
+): Promise<PersonDirectoryEntry> {
+  try {
+    return await getDb().begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtext('users.manager_graph'))`;
+
+      const name = input.name.trim();
+      const email = input.email.trim();
+      const emailKey = email.toLowerCase();
+
+      const duplicate = await tx<{ id: string }[]>`
+        select id
+        from users
+        where lower(email) = ${emailKey}
+        limit 1
+      `;
+
+      if (duplicate.length > 0) {
+        throw new AppError(ERROR_CODES.CONFLICT, "That email is already in use.", 409);
+      }
+
+      const managerEmail = input.managerEmail?.trim().toLowerCase() || null;
+      let managerId: string | null = null;
+      let managerName: string | null = null;
+
+      if (managerEmail) {
+        if (managerEmail === emailKey) {
+          throw AppError.validation("A person cannot be their own manager.");
+        }
+
+        const [managerRow] = await tx<{ id: string }[]>`
+          select id
+          from users
+          where lower(email) = ${managerEmail}
+          limit 1
+        `;
+
+        if (!managerRow) {
+          throw AppError.validation(
+            `No existing employee matches the manager email ${input.managerEmail}.`,
+          );
+        }
+
+        const manager = await loadManagerCandidate(tx, managerRow.id);
+        managerId = manager.id;
+        managerName = manager.name;
+      }
+
+      const [inserted] = await tx<{ id: string }[]>`
+        insert into users (name, email, role, manager_id, job_title, team)
+        values (
+          ${name},
+          ${email},
+          ${input.role}::user_role,
+          ${managerId},
+          ${normalizeText(input.jobTitle)},
+          ${normalizeText(input.team)}
+        )
+        returning id
+      `;
+
+      if (!inserted) {
+        throw AppError.internal("The employee could not be created.");
+      }
+
+      // A brand-new subject cannot already sit in the manager's chain, but the
+      // same guard keeps this writer consistent with every other graph writer.
+      if (managerId) {
+        await assertNoManagerCycle(tx, inserted.id, managerId);
+      }
+
+      const detailParts = [`Initial role: ${input.role}`, `Email: ${email}`];
+
+      if (managerName) {
+        detailParts.push(`Manager: ${managerName}`);
+      }
+
+      await auditPeopleChange(
+        tx,
+        actorId,
+        inserted.id,
+        "created",
+        `Created person — ${detailParts.join("; ")}`,
+      );
+
+      const [row] = await tx<PersonRow[]>`
+        select
+          u.id,
+          u.name,
+          u.email,
+          u.role,
+          u.manager_id,
+          m.name as manager_name,
+          u.job_title,
+          u.team,
+          u.is_active,
+          u.deactivated_at,
+          u.auth_subject
+        from users u
+        left join users m on m.id = u.manager_id
+        where u.id = ${inserted.id}
+      `;
+
+      if (!row) {
+        throw AppError.internal("The created employee could not be loaded.");
+      }
+
+      return toPerson(row);
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new AppError(ERROR_CODES.CONFLICT, "That email is already in use.", 409);
+    }
+
+    throw error;
+  }
 }
 
 /**

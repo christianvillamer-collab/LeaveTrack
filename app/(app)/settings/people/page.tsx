@@ -1,5 +1,6 @@
 import { History, Upload, Users } from "lucide-react";
 
+import { PersonCreateDialog } from "@/components/domain/person-create-dialog";
 import { PeopleDirectory } from "@/components/domain/people-directory";
 import { PeopleImportForm } from "@/components/domain/people-import-form";
 import { Alert } from "@/components/ui/alert";
@@ -30,6 +31,7 @@ const ACTION_LABELS: Record<UserAuditAction, string> = {
   deactivated: "Deactivated",
   reactivated: "Reactivated",
   imported: "Imported",
+  created: "Created",
 };
 
 const ACTION_VARIANTS: Record<
@@ -41,6 +43,7 @@ const ACTION_VARIANTS: Record<
   deactivated: "danger",
   reactivated: "success",
   imported: "neutral",
+  created: "success",
 };
 
 export default async function PeoplePage() {
@@ -68,6 +71,7 @@ export default async function PeoplePage() {
         eyebrow="Administration"
         title="People"
         description="Reassign managers, keep directory details current, and deactivate accounts without deleting history. Every change is audited."
+        actions={databaseUnavailable ? undefined : <PersonCreateDialog people={people} />}
       />
 
       {databaseUnavailable ? (

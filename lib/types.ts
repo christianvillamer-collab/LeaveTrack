@@ -325,7 +325,12 @@ export interface DirectoryEntry {
 
 /** Who changed a people record and what kind of change it was. */
 export type UserAuditAction =
-  "profile_updated" | "manager_reassigned" | "deactivated" | "reactivated" | "imported";
+  | "profile_updated"
+  | "manager_reassigned"
+  | "deactivated"
+  | "reactivated"
+  | "imported"
+  | "created";
 
 /**
  * The HR people-admin row. Wider than `DirectoryEntry` (which backs the

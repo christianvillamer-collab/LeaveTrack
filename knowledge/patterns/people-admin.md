@@ -49,9 +49,9 @@ select id from chain where id = :subject_id;
 
 - Use `union`, not `union all`: a pre-existing cycle must not loop forever.
 - Take the advisory lock **first**, before any row lock, in every writer of the graph
-  (reassignment, import, and `setPersonActive`). A row lock first would invert the order against a
-  concurrent import and risk a deadlock; `setPersonActive` counts active reports, so it needs the
-  same serialization.
+  (single create, reassignment, import, and `setPersonActive`). A row lock first would invert the
+  order against a concurrent import and risk a deadlock; `setPersonActive` counts active reports,
+  so it needs the same serialization.
 - Candidate checks: exists, `is_active`, `role = 'manager'`. HR admins are not manager candidates.
 - Requests move with the reporting line because queues join on `users.manager_id`; never rewrite
   `leave_requests`.
@@ -81,12 +81,24 @@ select id from chain where id = :subject_id;
   need one pass.
 - Role changes on existing rows are ignored; provider invites are out of scope.
 
+## Single-user create (E2-23)
+
+- `POST /api/people` is HR-only and creates exactly one person with an **initial** role. It is not
+  a role editor for existing rows and sends no provider invite.
+- Take `pg_advisory_xact_lock(hashtext('users.manager_graph'))` first, reject `lower(email)`
+  duplicates with 409, and resolve `managerEmail` to an active `manager` (HR admins are not
+  candidates). Self as manager is 400; unknown manager is 400; inactive/non-manager is 409.
+- Insert with `auth_subject = null` and write exactly one `created` row in `user_audit_log` in the
+  same transaction. Migration `0010` extends the CHECK constraint; grants and RLS are unchanged.
+- The Add user dialog collects name, email, initial role, optional manager, job title, and team, and
+  explains that the provider subject binds on first verified sign-in.
+
 ## Audit
 
 `user_audit_log` is append-only (`prevent_hard_delete` + `prevent_audit_update`). Exactly one row
 per real change, action constrained to
-`profile_updated | manager_reassigned | deactivated | reactivated | imported`. `detail` carries
-the readable before → after (or the deactivation reason).
+`profile_updated | manager_reassigned | deactivated | reactivated | imported | created`. `detail`
+carries the readable before → after (or the deactivation reason).
 
 ## Authorization
 
@@ -112,6 +124,10 @@ the readable before → after (or the deactivation reason).
    rewriting the request row.
 9. A case-only directory email correction on a linked row is persisted (not treated as a no-op).
 10. The accrual job credits nobody with `is_active = false` and leaves their balance unchanged.
+11. A single create writes one user and one `created` audit row; duplicate and invalid manager
+    cases write nothing.
+12. The route matrix covers `POST /api/people` as HR-only, and the DB authorization suite rejects
+    unknown people audit actions.
 
 ## Test isolation
 

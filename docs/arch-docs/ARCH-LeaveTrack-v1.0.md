@@ -54,6 +54,7 @@ policy_audit_log (id, user_id FK, leave_type_id FK, effective_from date, previou
 | POST   | /api/leave-requests/:id/decision | Manager       | US-03. 403 if requester is not a direct report (AC3).                                                |
 | POST   | /api/leave-requests/:id/override | HR Admin      | E2-07. Explicit `override: true` + reason; audited.                                                  |
 | POST   | /api/policies                    | HR Admin      | E2-08. Upsert an effective-dated rate; one audit row.                                                |
+| POST   | /api/people                      | HR Admin      | E2-23. Create one person; initial role only, no provider invite, one `created` people-audit row.    |
 | GET    | /api/audit/:userId               | HR Admin      | US-05. Soft-deleted-excluded rows; `from`/`to`/`status`/`page`/`pageSize`, or `exportAll=1` for CSV. |
 | POST   | /api/jobs/accrual                | System (cron) | US-07. Idempotent — see ADR-LeaveTrack-E002.                                                         |
 
