@@ -7,13 +7,19 @@ import { countUnreadNotifications } from "@/lib/db/notifications";
 // later build with runtime secrets would serve that redirect from cache.
 export const dynamic = "force-dynamic";
 
+// The badge is decoration. A slow or wedged pooled connection must not hold the
+// whole App Router stream open until the platform timeout, so bound the read.
+const BADGE_QUERY_TIMEOUT_MS = 3000;
+
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await requireSession();
 
   let unreadNotifications = 0;
-
   try {
-    unreadNotifications = await countUnreadNotifications(session.id);
+    unreadNotifications = await countUnreadNotifications(
+      session.id,
+      AbortSignal.timeout(BADGE_QUERY_TIMEOUT_MS),
+    );
   } catch {
     // The badge is decoration: a database hiccup must not take down every page
     // in the shell. The notifications page reports the real error itself.

@@ -177,14 +177,17 @@ export async function listNotifications(
   };
 }
 
-export async function countUnreadNotifications(recipientId: string): Promise<number> {
+export async function countUnreadNotifications(
+  recipientId: string,
+  signal?: AbortSignal,
+): Promise<number> {
   const [row] = await getDb()<{ count: number }[]>`
     select count(*)::int as count
     from notifications
     where recipient_id = ${recipientId}
       and channel = 'in_app'
       and read_at is null
-  `;
+  `.signal(signal);
 
   return row?.count ?? 0;
 }
