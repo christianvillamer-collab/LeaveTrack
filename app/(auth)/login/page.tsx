@@ -138,7 +138,11 @@ export default async function LoginPage({
 
           {loginError ? <Alert variant="danger">{loginError}</Alert> : null}
 
-          <LoginForm next={next} configured={configured} />
+          <LoginForm
+            next={next}
+            configured={configured}
+            demoEnabled={process.env.DEMO_LOGIN_ENABLED?.trim().toLowerCase() === "true"}
+          />
         </div>
       </section>
     </main>

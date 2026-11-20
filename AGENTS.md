@@ -65,10 +65,15 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   completes magic-link/OAuth/confirmation redirects. Post-login `next` values go through
   `lib/auth/safe-next-path.ts` (rejects `//`, absolute, `\`, control chars, `/login`). Sign-out uses
   `signOut({ scope: "local" })` so cookies clear before the revoke request.
-- Public auth paths (`/login`, `/auth/login`, `/auth/callback`, `/forbidden`) are reachable without a
-  session but are still refreshed in `proxy.ts`; only `/api/health`, `/api/jobs/accrual`, and
-  `/api/jobs/notifications` bypass the session read entirely. A Server Component cannot persist a
-  rotated refresh token, so skipping that refresh can revoke the session via reuse detection.
+- Public auth paths (`/login`, `/auth/login`, `/auth/demo-login`, `/auth/callback`, `/forbidden`) are
+  reachable without a session but are still refreshed in `proxy.ts`; only `/api/health`,
+  `/api/jobs/accrual`, and `/api/jobs/notifications` bypass the session read entirely. A Server
+  Component cannot persist a rotated refresh token, so skipping that refresh can revoke the session
+  via reuse detection.
+- One-click demo sign-in is opt-in via `DEMO_LOGIN_ENABLED=true`. `lib/auth/demo-accounts.ts` holds
+  only public metadata for the three seeded roles; `/auth/demo-login` validates an allowlisted
+  account id, resolves the email, injects the server-only `DEMO_LOGIN_PASSWORD`, and delegates to
+  the normal `/auth/login` handler. Never put a password in the client bundle or the demo picker.
 - The dashboard is DB-backed per role: employees read `getMyLeaveData`, managers read the
   SQL-scoped `getTeamLeaveData` queue, and HR reads the org-wide list, directory, policy snapshot,
   audit counts, and `getAccrualSummary()`. `/settings/policies` is DB-backed and read/write for HR.
@@ -82,11 +87,12 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
   `POST /api/leave-requests/:id/decision`, `POST /api/leave-requests/:id/override`,
   `POST /api/policies`, `GET /api/audit/:userId`, `GET /api/notifications`,
   `POST /api/notifications/:id/read`, `POST /api/notifications/read-all`,
-  `GET`/`POST /api/jobs/accrual`, `GET`/`POST /api/jobs/notifications`, `POST /auth/login`, and
-  `GET /auth/callback`. All `/api/` failures must go through `withApiHandler` + `AppError` and return
-  `{ success:false, error:{ code, message } }`; use `successStatus: 201` for created resources.
-  Dynamic routes receive `params` through the handler context. The public auth routes
-  (`/auth/login`, `/auth/callback`) return JSON or redirects and are exempt from that envelope.
+  `GET`/`POST /api/jobs/accrual`, `GET`/`POST /api/jobs/notifications`, `POST /auth/login`,
+  `POST /auth/demo-login`, and `GET /auth/callback`. All `/api/` failures must go through
+  `withApiHandler` + `AppError` and return `{ success:false, error:{ code, message } }`; use
+  `successStatus: 201` for created resources. Dynamic routes receive `params` through the handler
+  context. The public auth routes (`/auth/login`, `/auth/demo-login`, `/auth/callback`) return JSON
+  or redirects and are exempt from that envelope.
 - Decisions are manager-only and transactional: lock the request, verify the owner’s `manager_id`,
   reject non-pending/duplicate decisions with 409, decrement only tracked leave types on approve,
   require a reject reason, and insert the append-only audit row in the same transaction. Over-balance
@@ -122,7 +128,9 @@ npm run auth:seed           # dev-only: confirmed Supabase users for seeded emai
 - `.env.local` is gitignored. `npm run env:setup` writes local Docker defaults; Supabase connections
   replace `DATABASE_URL`/`DIRECT_URL`. Sign-in also needs `NEXT_PUBLIC_SUPABASE_URL` +
   `NEXT_PUBLIC_SUPABASE_ANON_KEY`; `SUPABASE_SERVICE_ROLE_KEY` and `SEED_AUTH_PASSWORD` are for
-  `npm run auth:seed` only and must never reach the browser.
+  `npm run auth:seed` only and must never reach the browser. The optional demo picker uses separate
+  server-only `DEMO_LOGIN_ENABLED` and `DEMO_LOGIN_PASSWORD`; the password must match the seeded
+  demo users but is injected only by `/auth/demo-login`.
 - Schema lives in `db/migrations/0001_init.sql`; seeds in `db/seed.sql`. Requests and audit rows
   reject hard deletes at the trigger level. Never add a hard-delete path.
 - The database is **deny-by-default** for the Supabase client roles (`ADR-LeaveTrack-E005`,
